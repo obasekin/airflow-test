@@ -2,7 +2,6 @@ from datetime import datetime
 
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-from airflow.operators.empty import EmptyOperator
 
 
 def start_task():
@@ -103,5 +102,9 @@ with DAG(
 
     # Bağlantılar
     start >> [part_1, part_2]  # start'tan part_1 ve part_2'ye paralel
-    [part_1, part_2] >> [pod_1, pod_2, pod_3]  # part'lardan 3 pod'a paralel
+    
+    # part'lardan 3 pod'a paralel bağlantı
+    for upstream in [part_1, part_2]:
+        upstream >> [pod_1, pod_2, pod_3]
+    
     [pod_1, pod_2, pod_3] >> end  # tüm pod'lardan end'e
