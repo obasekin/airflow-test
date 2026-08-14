@@ -2,6 +2,7 @@ import random
 from datetime import datetime
 
 from airflow import DAG
+from airflow.models.baseoperator import cross_downstream
 from airflow.providers.standard.operators.python import PythonOperator
 
 
@@ -213,5 +214,5 @@ with DAG(
 
     # Bağlantılar
     start >> [part_1, part_2]
-    [part_1, part_2] >> [pod_1, pod_2, pod_3]
+    cross_downstream([part_1, part_2], [pod_1, pod_2, pod_3])
     [pod_1, pod_2, pod_3] >> end
