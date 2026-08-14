@@ -3,8 +3,6 @@ from datetime import datetime
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from airflow.operators.empty import EmptyOperator
-from airflow.providers.cncf.kubernetes.operators.kubernetes_pod import KubernetesPodOperator
-from kubernetes.client import models as k8s
 
 
 def start_task():
@@ -24,28 +22,31 @@ def dummy_task(task_name):
     print(f"Dummy Task: {task_name} tamamlandı!")
 
 
+def pod_task(pod_id):
+    """Kubernetes Pod'u simüle eden task"""
+    import socket
+    import os
+    import platform
+    
+    print("=" * 60)
+    print(f"POD TASK - {pod_id}")
+    print("=" * 60)
+    print(f"Hostname: {socket.gethostname()}")
+    print(f"Pod ID: {pod_id}")
+    print(f"IP Address: {socket.gethostbyname(socket.gethostname())}")
+    print(f"Platform: {platform.platform()}")
+    print(f"Python Version: {platform.python_version()}")
+    print(f"Process ID: {os.getpid()}")
+    print("=" * 60)
+    import time
+    time.sleep(1)
+
+
 def end_task():
     """Son task"""
     print("=" * 50)
     print("END TASK - Tüm görevler tamamlandı!")
     print("=" * 50)
-
-
-# Pod'da çalışacak Python kodu
-pod_commands = [
-    "python",
-    "-c",
-    """
-import socket
-import os
-print('='*50)
-print(f'POD TASK')
-print(f'Hostname: {socket.gethostname()}')
-print(f'Pod IP: {os.environ.get("HOSTNAME", "N/A")}')
-print(f'Python Version: {__import__("sys").version.split()[0]}')
-print('='*50)
-""",
-]
 
 
 with DAG(
@@ -75,38 +76,23 @@ with DAG(
         op_kwargs={"task_name": "Part 2"},
     )
 
-    # 3 Tane Paralel Kubernetes Pod Operatörü
-    pod_1 = KubernetesPodOperator(
+    # 3 Tane Paralel Kubernetes Pod Operatörleri (Python simülasyonu)
+    pod_1 = PythonOperator(
         task_id="kubernetes_pod_1",
-        name="test-pod-1",
-        namespace="default",
-        image="python:3.9",
-        cmds=pod_commands[0:1],
-        arguments=pod_commands[1:],
-        is_delete_operator_pod=True,
-        get_logs=True,
+        python_callable=pod_task,
+        op_kwargs={"pod_id": "pod-1"},
     )
 
-    pod_2 = KubernetesPodOperator(
+    pod_2 = PythonOperator(
         task_id="kubernetes_pod_2",
-        name="test-pod-2",
-        namespace="default",
-        image="python:3.9",
-        cmds=pod_commands[0:1],
-        arguments=pod_commands[1:],
-        is_delete_operator_pod=True,
-        get_logs=True,
+        python_callable=pod_task,
+        op_kwargs={"pod_id": "pod-2"},
     )
 
-    pod_3 = KubernetesPodOperator(
+    pod_3 = PythonOperator(
         task_id="kubernetes_pod_3",
-        name="test-pod-3",
-        namespace="default",
-        image="python:3.9",
-        cmds=pod_commands[0:1],
-        arguments=pod_commands[1:],
-        is_delete_operator_pod=True,
-        get_logs=True,
+        python_callable=pod_task,
+        op_kwargs={"pod_id": "pod-3"},
     )
 
     # END TASK
