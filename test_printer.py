@@ -52,7 +52,7 @@ def end_task():
 with DAG(
     dag_id="test_printer_5min",
     start_date=datetime(2026, 8, 14),
-    schedule_interval="*/5 * * * *",  # 5 dakikada bir çalışır
+    schedule="*/5 * * * *",  # 5 dakikada bir çalışır
     catchup=False,
     tags=["test", "kubernetes"],
 ) as dag:
