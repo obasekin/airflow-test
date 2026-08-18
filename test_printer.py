@@ -142,7 +142,7 @@ def end_task(ti, pod_1_result=None, pod_2_result=None, pod_3_result=None):
 with DAG(
     dag_id="test_printer_5min",
     start_date=datetime(2026, 8, 14),
-    schedule="*/5 * * * *",  # 5 dakikada bir çalışır
+    schedule="*/30 * * * *",  # 30 dakikada bir çalışır
     catchup=False,
     tags=["test", "kubernetes"],
 ) as dag:
