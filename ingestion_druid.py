@@ -76,6 +76,36 @@ DEFAULT_ROWS: List[Dict[str, Any]] = [
     },
 ]
 
+TASK_STATE_PATH = Path(__file__).resolve().parent / "druid_ingestion_state.json"
+
+
+def load_task_state() -> Dict[str, Any]:
+    if not TASK_STATE_PATH.exists():
+        return {}
+
+    try:
+        with open(TASK_STATE_PATH, "r", encoding="utf-8") as file:
+            return json.load(file)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_task_state(task_id: str, datasource_name: str, status: str) -> None:
+    state = {
+        "task_id": task_id,
+        "datasource_name": datasource_name,
+        "status": status,
+        "updated_at": time.time(),
+    }
+
+    with open(TASK_STATE_PATH, "w", encoding="utf-8") as file:
+        json.dump(state, file, ensure_ascii=False, indent=2)
+
+
+def clear_task_state() -> None:
+    if TASK_STATE_PATH.exists():
+        TASK_STATE_PATH.unlink()
+
 
 def load_ingestion_spec_template(spec_path: Optional[str] = None) -> Dict[str, Any]:
     if spec_path is None:
@@ -100,6 +130,46 @@ def build_ingestion_spec(
     return spec
 
 
+def poll_task_status(
+    druid_url: str,
+    username: str,
+    password: str,
+    task_id: str,
+    datasource_name: str,
+    poll_interval: int = 3,
+    timeout: int = 30,
+) -> str:
+    headers = {"Content-Type": "application/json"}
+    auth = (username, password)
+    status_url = f"{druid_url}/druid/indexer/v1/task/{task_id}/status"
+    current_status = "PENDING"
+
+    while True:
+        try:
+            status_response = requests.get(
+                status_url,
+                headers=headers,
+                auth=auth,
+                timeout=timeout,
+            )
+            status_response.raise_for_status()
+        except requests.RequestException as exc:
+            print(f"Bağlantı kesildi; task takibi devam edecek: {task_id} ({exc})")
+            save_task_state(task_id, datasource_name, current_status)
+            time.sleep(poll_interval)
+            continue
+
+        status_json = status_response.json()
+        current_status = status_json["status"]["status"]
+        save_task_state(task_id, datasource_name, current_status)
+        print(f"Durum: {current_status}")
+
+        if current_status in ("SUCCESS", "FAILED"):
+            return current_status
+
+        time.sleep(poll_interval)
+
+
 def submit_ingestion_task(
     druid_url: str,
     username: str,
@@ -108,67 +178,86 @@ def submit_ingestion_task(
     rows: Optional[List[Dict[str, Any]]] = None,
     poll_interval: int = 3,
     timeout: int = 30,
+    max_retries: int = 3,
 ) -> Dict[str, Any]:
     headers = {"Content-Type": "application/json"}
     auth = (username, password)
-    ingestion_spec = build_ingestion_spec(datasource_name=datasource_name, rows=rows)
+    attempt = 0
 
-    submit_url = f"{druid_url}/druid/indexer/v1/task"
-    response = requests.post(
-        submit_url,
-        headers=headers,
-        json=ingestion_spec,
-        auth=auth,
-        timeout=timeout,
-    )
+    while attempt <= max_retries:
+        state = load_task_state()
+        resume_task_id = state.get("task_id")
 
-    print("Submit status code:", response.status_code)
-    print("Submit response:", response.text)
+        if resume_task_id and state.get("status") not in ("SUCCESS", "FAILED"):
+            print(f"Devam eden task bulundu: {resume_task_id}")
+            current_status = poll_task_status(
+                druid_url=druid_url,
+                username=username,
+                password=password,
+                task_id=resume_task_id,
+                datasource_name=datasource_name,
+                poll_interval=poll_interval,
+                timeout=timeout,
+            )
+            if current_status == "SUCCESS":
+                return {
+                    "status": "success",
+                    "task_id": resume_task_id,
+                    "datasource": datasource_name,
+                }
+            clear_task_state()
 
-    if response.status_code != 200:
-        raise RuntimeError("Task gönderimi başarısız oldu.")
-
-    task_id = response.json().get("task")
-    if not task_id:
-        raise RuntimeError("Task ID alınamadı.")
-
-    print(f"\nTask ID: {task_id}")
-
-    status_url = f"{druid_url}/druid/indexer/v1/task/{task_id}/status"
-    current_status = "PENDING"
-
-    while True:
-        status_response = requests.get(
-            status_url,
+        ingestion_spec = build_ingestion_spec(datasource_name=datasource_name, rows=rows)
+        submit_url = f"{druid_url}/druid/indexer/v1/task"
+        response = requests.post(
+            submit_url,
             headers=headers,
+            json=ingestion_spec,
             auth=auth,
             timeout=timeout,
         )
-        status_response.raise_for_status()
 
-        status_json = status_response.json()
-        current_status = status_json["status"]["status"]
-        print(f"Durum: {current_status}")
+        print("Submit status code:", response.status_code)
+        print("Submit response:", response.text)
 
-        if current_status in ("SUCCESS", "FAILED"):
-            break
+        if response.status_code != 200:
+            raise RuntimeError("Task gönderimi başarısız oldu.")
 
-        time.sleep(poll_interval)
+        task_id = response.json().get("task")
+        if not task_id:
+            raise RuntimeError("Task ID alınamadı.")
 
-    if current_status == "SUCCESS":
-        print(
-            f"\n✅ Task başarılı! '{datasource_name}' datasource'una data eklendi."
+        print(f"\nTask ID: {task_id}")
+        current_status = poll_task_status(
+            druid_url=druid_url,
+            username=username,
+            password=password,
+            task_id=task_id,
+            datasource_name=datasource_name,
+            poll_interval=poll_interval,
+            timeout=timeout,
         )
-        return {
-            "status": "success",
-            "task_id": task_id,
-            "datasource": datasource_name,
-        }
 
-    print("\n❌ Task başarısız oldu.")
-    print("Log:")
-    print(f"{druid_url}/druid/indexer/v1/task/{task_id}/log")
-    raise RuntimeError(f"Task failed with status: {current_status}")
+        if current_status == "SUCCESS":
+            print(
+                f"\n✅ Task başarılı! '{datasource_name}' datasource'una data eklendi."
+            )
+            clear_task_state()
+            return {
+                "status": "success",
+                "task_id": task_id,
+                "datasource": datasource_name,
+            }
+
+        attempt += 1
+        print(f"\n❌ Task başarısız oldu, yeniden başlatılıyor. Deneme: {attempt}/{max_retries}")
+        print(f"Log: {druid_url}/druid/indexer/v1/task/{task_id}/log")
+        clear_task_state()
+
+        if attempt > max_retries:
+            raise RuntimeError(f"Task failed with status: {current_status}")
+
+    raise RuntimeError("Task retry loop exceeded max retries.")
 
 
 def query_datasource(
