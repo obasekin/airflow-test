@@ -1,8 +1,12 @@
 import json
 import os
-from typing import Any, Dict
+import time
+import ssl
+import uuid
+from typing import Any, Dict, List, Optional
 
 import requests
+import websocket
 
 try:
     from airflow.hooks.base import BaseHook
@@ -147,6 +151,257 @@ def check_jupyterhub_connection(conn_id: str = DEFAULT_CONN_ID) -> Dict[str, Any
         "username": config["username"],
         "base_url": config["base_url"],
         "payload": payload,
+    }
+
+
+def list_kernels(conn_id: str = DEFAULT_CONN_ID) -> List[Dict[str, Any]]:
+    """List all kernels for the JupyterHub user."""
+    config = get_jupyterhub_config(conn_id=conn_id)
+    session = build_jupyterhub_session(conn_id=conn_id)
+    url = f"{config['base_url']}/user/{config['username']}/api/kernels"
+
+    response = session.get(url, timeout=60, allow_redirects=False)
+    response.raise_for_status()
+
+    return response.json()
+
+
+def get_or_select_kernel(
+    conn_id: str = DEFAULT_CONN_ID,
+    prefer_idle: bool = True,
+) -> str:
+    """
+    Get an existing kernel ID.
+    Prefer idle python3 kernels; fallback to any python3 kernel.
+    """
+    kernels = list_kernels(conn_id=conn_id)
+
+    if not kernels:
+        raise RuntimeError("No existing kernels found.")
+
+    if prefer_idle:
+        idle_kernels = [
+            k
+            for k in kernels
+            if k.get("name") == "python3"
+            and k.get("execution_state") == "idle"
+        ]
+        if idle_kernels:
+            return idle_kernels[0]["id"]
+
+    python_kernels = [k for k in kernels if k.get("name") == "python3"]
+    if python_kernels:
+        return python_kernels[0]["id"]
+
+    raise RuntimeError("No python3 kernel found.")
+
+
+def create_notebook(
+    conn_id: str = DEFAULT_CONN_ID,
+    notebook_name: Optional[str] = None,
+    code_cells: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Create a new notebook in JupyterHub."""
+    config = get_jupyterhub_config(conn_id=conn_id)
+    session = build_jupyterhub_session(conn_id=conn_id)
+
+    if notebook_name is None:
+        notebook_name = f"airflow_notebook_{int(time.time())}.ipynb"
+
+    url = f"{config['base_url']}/user/{config['username']}/api/contents/{notebook_name}"
+
+    cells = []
+    if code_cells:
+        for code in code_cells:
+            cells.append({
+                "cell_type": "code",
+                "execution_count": None,
+                "metadata": {},
+                "outputs": [],
+                "source": code.split("\n") if "\n" in code else [code],
+            })
+
+    notebook = {
+        "type": "notebook",
+        "format": "json",
+        "content": {
+            "cells": cells if cells else [],
+            "metadata": {
+                "kernelspec": {
+                    "display_name": "Python 3",
+                    "language": "python",
+                    "name": "python3",
+                },
+                "language_info": {
+                    "name": "python",
+                },
+            },
+            "nbformat": 4,
+            "nbformat_minor": 4,
+        },
+    }
+
+    response = session.put(url, json=notebook, timeout=60, allow_redirects=False)
+    response.raise_for_status()
+
+    return {
+        "notebook_name": notebook_name,
+        "notebook_path": response.json().get("path"),
+        "url": f"{config['base_url']}/user/{config['username']}/notebooks/{notebook_name}",
+    }
+
+
+def execute_code_in_kernel(
+    code: str,
+    kernel_id: str,
+    conn_id: str = DEFAULT_CONN_ID,
+    timeout: int = 30,
+) -> Dict[str, Any]:
+    """Execute code in a Jupyter kernel via WebSocket."""
+    config = get_jupyterhub_config(conn_id=conn_id)
+
+    ws_url = (
+        f"wss://{config['base_url'].replace('https://', '')}"
+        f"/user/{config['username']}/api/kernels/{kernel_id}/channels"
+    )
+
+    ws_headers = [
+        f"Authorization: token {config['token']}",
+    ]
+    if config.get("cf_access_client_id") and config.get("cf_access_client_secret"):
+        ws_headers.append(f"CF-Access-Client-Id: {config['cf_access_client_id']}")
+        ws_headers.append(f"CF-Access-Client-Secret: {config['cf_access_client_secret']}")
+
+    try:
+        ws = websocket.create_connection(
+            ws_url,
+            header=ws_headers,
+            origin=config["base_url"],
+            timeout=timeout,
+            sslopt={
+                "cert_reqs": ssl.CERT_NONE,
+                "check_hostname": False,
+            },
+        )
+    except Exception as e:
+        raise RuntimeError(f"WebSocket connection failed: {type(e).__name__}: {e}")
+
+    msg_id = str(uuid.uuid4())
+    message = {
+        "header": {
+            "msg_id": msg_id,
+            "username": config["username"],
+            "session": str(uuid.uuid4()),
+            "msg_type": "execute_request",
+            "version": "5.3",
+        },
+        "parent_header": {},
+        "metadata": {},
+        "content": {
+            "code": code,
+            "silent": False,
+            "store_history": True,
+            "user_expressions": {},
+            "allow_stdin": False,
+            "stop_on_error": True,
+        },
+        "channel": "shell",
+    }
+
+    ws.send(json.dumps(message))
+
+    outputs = []
+    execution_status = None
+    start_time = time.time()
+
+    while time.time() - start_time < timeout:
+        try:
+            raw = ws.recv()
+            if not raw:
+                continue
+
+            msg = json.loads(raw)
+            msg_type = msg.get("msg_type")
+
+            if msg_type == "stream":
+                text = msg.get("content", {}).get("text", "")
+                outputs.append({
+                    "type": "stream",
+                    "text": text,
+                })
+
+            elif msg_type == "execute_result":
+                data = msg.get("content", {}).get("data", {})
+                outputs.append({
+                    "type": "execute_result",
+                    "data": data,
+                })
+
+            elif msg_type == "error":
+                content = msg.get("content", {})
+                outputs.append({
+                    "type": "error",
+                    "ename": content.get("ename"),
+                    "evalue": content.get("evalue"),
+                    "traceback": content.get("traceback", []),
+                })
+
+            elif msg_type == "execute_reply":
+                content = msg.get("content", {})
+                execution_status = content.get("status")
+                break
+
+        except Exception as e:
+            outputs.append({
+                "type": "error",
+                "message": str(e),
+            })
+            break
+
+    ws.close()
+
+    return {
+        "execution_status": execution_status,
+        "outputs": outputs,
+    }
+
+
+def run_notebook_workflow(
+    code: str,
+    conn_id: str = DEFAULT_CONN_ID,
+    notebook_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Complete workflow: create notebook, execute code, return results + notebook link.
+    """
+    config = get_jupyterhub_config(conn_id=conn_id)
+
+    # 1. Create notebook
+    notebook_info = create_notebook(
+        conn_id=conn_id,
+        notebook_name=notebook_name,
+        code_cells=[code],
+    )
+
+    # 2. Get kernel
+    kernel_id = get_or_select_kernel(conn_id=conn_id, prefer_idle=True)
+
+    # 3. Execute code
+    result = execute_code_in_kernel(
+        code=code,
+        kernel_id=kernel_id,
+        conn_id=conn_id,
+        timeout=30,
+    )
+
+    return {
+        "status": "success",
+        "notebook_name": notebook_info["notebook_name"],
+        "notebook_path": notebook_info["notebook_path"],
+        "notebook_url": notebook_info["url"],
+        "kernel_id": kernel_id,
+        "execution_status": result["execution_status"],
+        "outputs": result["outputs"],
     }
 
 
