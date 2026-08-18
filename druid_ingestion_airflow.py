@@ -44,7 +44,7 @@ with DAG(
             raise ValueError("Druid username/password is not configured")
 
         result = run_ingestion(
-            datasource_name="TURtest",
+            datasource_name="druid_airflow_test_data1",
             druid_url=druid_url,
             username=username,
             password=password,
