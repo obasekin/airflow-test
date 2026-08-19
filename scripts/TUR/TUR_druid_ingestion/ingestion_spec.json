@@ -1,0 +1,149 @@
+{
+  "type": "index_parallel",
+  "spec": {
+    "dataSchema": {
+      "dataSource": "TURtest",
+      "timestampSpec": {
+        "column": "timestamp_local",
+        "format": "posix",
+        "missingValue": null
+      },
+      "dimensionsSpec": {
+        "dimensions": [
+          {"type": "string", "name": "gender", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "city", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "long", "name": "year", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "long", "name": "wz_city_rank", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "double", "name": "latitude", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "string", "name": "wz_district", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "language", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "poi_name", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "long", "name": "hour", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "string", "name": "ipv4", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "ipv6", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "geohash", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "hz_city", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "wz_city", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "long", "name": "id_type", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "string", "name": "model", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "long", "name": "wz_district_rank", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "long", "name": "hz_neighborhood_rank", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "string", "name": "maid", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "make", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "long", "name": "day", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "string", "name": "hz_district", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "double", "name": "longitude", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "long", "name": "timestamp", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "long", "name": "day_of_week", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "string", "name": "app", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "connection_type", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "profile", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "long", "name": "wz_neighborhood_rank", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "string", "name": "lin_name", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "poi_fclass", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "long", "name": "hz_city_rank", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "long", "name": "minute", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "string", "name": "wz_neighborhood", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "hz_neighborhood", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "carrier", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "lin_fclass", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "long", "name": "month", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "string", "name": "district", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "string", "name": "neighborhood", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": true},
+          {"type": "long", "name": "age", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false},
+          {"type": "long", "name": "hz_district_rank", "multiValueHandling": "SORTED_ARRAY", "createBitmapIndex": false}
+        ],
+        "dimensionExclusions": ["__time", "timestamp_local"],
+        "includeAllDimensions": false,
+        "useSchemaDiscovery": false
+      },
+      "metricsSpec": [],
+      "granularitySpec": {
+        "type": "uniform",
+        "segmentGranularity": "DAY",
+        "queryGranularity": "HOUR",
+        "rollup": false,
+        "intervals": []
+      },
+      "transformSpec": {
+        "filter": null,
+        "transforms": [
+          {
+            "type": "expression",
+            "name": "profile",
+            "expression": "string_to_array(profile,',')"
+          }
+        ]
+      }
+    },
+    "ioConfig": {
+      "type": "index_parallel",
+      "inputSource": {
+        "type": "google",
+        "prefixes": ["gs://arcanor-orion/output/mobility/TUR/2026/08/04"]
+      },
+      "inputFormat": {
+        "type": "parquet",
+        "binaryAsString": true
+      },
+      "appendToExisting": true,
+      "dropExisting": false
+    },
+    "tuningConfig": {
+      "type": "index_parallel",
+      "maxRowsPerSegment": 5000000,
+      "appendableIndexSpec": {
+        "type": "onheap",
+        "preserveExistingMetrics": false
+      },
+      "maxRowsInMemory": 1000000,
+      "maxBytesInMemory": 0,
+      "skipBytesInMemoryOverheadCheck": false,
+      "maxTotalRows": null,
+      "numShards": null,
+      "splitHintSpec": null,
+      "partitionsSpec": {
+        "type": "dynamic",
+        "maxRowsPerSegment": 5000000,
+        "maxTotalRows": null
+      },
+      "indexSpec": {
+        "bitmap": {"type": "roaring"},
+        "dimensionCompression": "lz4",
+        "stringDictionaryEncoding": {"type": "utf8"},
+        "metricCompression": "lz4",
+        "longEncoding": "longs"
+      },
+      "indexSpecForIntermediatePersists": {
+        "bitmap": {"type": "roaring"},
+        "dimensionCompression": "lz4",
+        "stringDictionaryEncoding": {"type": "utf8"},
+        "metricCompression": "lz4",
+        "longEncoding": "longs"
+      },
+      "maxPendingPersists": 0,
+      "forceGuaranteedRollup": false,
+      "reportParseExceptions": false,
+      "pushTimeout": 0,
+      "segmentWriteOutMediumFactory": null,
+      "maxNumConcurrentSubTasks": 15,
+      "maxRetry": 3,
+      "taskStatusCheckPeriodMs": 1000,
+      "chatHandlerTimeout": "PT10S",
+      "chatHandlerNumRetries": 5,
+      "maxNumSegmentsToMerge": 100,
+      "totalNumMergeTasks": 10,
+      "logParseExceptions": false,
+      "maxParseExceptions": 2147483647,
+      "maxSavedParseExceptions": 0,
+      "maxColumnsToMerge": -1,
+      "awaitSegmentAvailabilityTimeoutMillis": 0,
+      "maxAllowedLockCount": -1,
+      "partitionDimensions": []
+    }
+  },
+  "context": {
+    "forceTimeChunkLock": true,
+    "useLineageBasedSegmentAllocation": true
+  }
+}
