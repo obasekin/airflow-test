@@ -6,7 +6,7 @@ from airflow import DAG
 from airflow.decorators import task
 from airflow.hooks.base import BaseHook
 
-from ingestion_druid import run_ingestion
+from scripts.druid_ingestion.ingestion_druid import run_ingestion
 
 
 DAG_ID = "druid_ingestion_task"

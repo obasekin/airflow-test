@@ -5,7 +5,7 @@ import logging
 from airflow import DAG
 from airflow.decorators import task
 
-from jupyterhub_credentials import (
+from scripts.jupyterhub_credentials.jupyterhub_credentials import (
     check_jupyterhub_connection,
     get_jupyterhub_config,
     run_notebook_workflow,
