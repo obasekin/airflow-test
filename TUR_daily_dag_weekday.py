@@ -40,7 +40,10 @@ def druid_ingestion_workflow():
     )
     def check_manifest_ready(folder_name: str, k_suffix: str) -> PokeReturnValue:
         """ 24 saat boyunca manifest bekleyen sensör. """
-        pass
+        # Not: Gerçek kodunuzda klasör kontrolü yapılacak.
+        # Hazır olduğunda is_ready = True olacak ve folder_name XCom ile sonrasına aktarılacak.
+        is_ready = True 
+        return PokeReturnValue(is_done=is_ready, xcom_value=folder_name)
 
     @task(execution_timeout=timedelta(hours=2), retries=3)
     def execute_idempotent_druid_ingestion(folder_name: str, k_suffix: str):
@@ -72,15 +75,21 @@ def druid_ingestion_workflow():
         for k in ["k1", "k2", "k3", "k4"]:
             @task_group(group_id=f"group_{k}")
             def process_k_group(folder_arg: str, current_k: str):
-                manifest = check_manifest_ready.override(task_id=f"is_manifest_ready_{current_k}")(
+                
+                # 1. Manifest çalışır ve başarılı olunca klasör yolunu dışarı aktarır
+                manifest_result_folder = check_manifest_ready.override(task_id=f"is_manifest_ready_{current_k}")(
                     folder_name=folder_arg, 
                     k_suffix=current_k
                 )
+                
+                # 2. Ingestion taskı, parametresini manifest taskının sonucundan alır.
+                # Veri bağımlılığı (Data Dependency) sayesinde Airflow UI'da oklar düzgün çizilir.
                 ingestion = execute_idempotent_druid_ingestion.override(task_id=f"ingestion_process_{current_k}")(
-                    folder_name=folder_arg, 
+                    folder_name=manifest_result_folder, 
                     k_suffix=current_k
                 )
-                manifest >> ingestion
+                
+                # Artık "manifest >> ingestion" YAZMIYORUZ.
 
             k_group = process_k_group(folder_arg=folder_task, current_k=k)
             folder_task >> k_group
@@ -110,8 +119,7 @@ def druid_ingestion_workflow():
     start = EmptyOperator(task_id="start")
     
     # DİKKAT: Branching kullanıldığında 'end' taskının çalışabilmesi için 
-    # trigger_rule "none_failed_min_one_success" olmalıdır. 
-    # Yoksa atlanan dallar yüzünden end taskı da atlanır (skipped olur).
+    # trigger_rule "none_failed_min_one_success" olmalıdır.
     end = EmptyOperator(task_id="end", trigger_rule="none_failed_min_one_success")
 
     # Dallanma kontrol tasklarını oluştur
