@@ -41,6 +41,11 @@ def druid_ingestion_workflow():
         """
         Klasördeki manifest dosyalarını kontrol eder. 24 saat boyunca (5 dk aralıklarla) bekler.
         Gelmezse Fail olur, retry atar ve default_args sayesinde on_failure email'i gönderir.
+
+        Görseldeki Adım: 'Manifest Check' -> 'does all files ready' -> False ise 'wait' döngüsü.
+        Not: Klasördeki dosyaların tam olup olmadığı (manifest) kontrol edilir.
+        - Eğer dosyalar tamamsa: return PokeReturnValue(is_done=True) -> Bir sonraki taska geçer.
+        - Eğer eksikse: return PokeReturnValue(is_done=False) -> Airflow uykuya dalar (wait) ve poke_interval süresi sonra tekrar bakar.
         """
         pass
 
@@ -56,6 +61,29 @@ def druid_ingestion_workflow():
         Idempotent Druid ingestion işlemi. (Maksimum 2 saat sürebilir).
         Eğer Druid'de task takılırsa 2 saat sonra Airflow bu taskı fail edip retry atacak.
         Retry attığında kod yine 'Is there any run?' mantığıyla kontrol edeceği için duplicate YARATILMAYACAKTIR.
+
+        Görseldeki Adım: 'Druid Check' -> 'Start Ingestion' -> 'Check Druid Run Status' -> Fail ise başa dön.
+        
+        Kritik İhtiyaç Çözümü: Taskın körü körüne retry edip duplicate oluşturmaması için tüm bu blok tek task içindedir.
+        Airflow bu taskı retry ettiğinde işlemler her seferinde şu sırayla çalışır:
+        
+        1. DRUID & BUCKET LOG CHK ('Is there any run?'):
+           - Loglardan veya Druid API'den bu ingestion'ın daha önce tetiklenip tetiklenmediği kontrol edilir.
+        
+        2. DURUM YÖNETİMİ ('Is there same run Success or Running?'):
+           - Durum SUCCESS ise: Task başarılı sayılır ve işlem bitirilir (return).
+           - Durum RUNNING ise: Ingestion zaten devam ediyordur, bitene kadar beklenir (While Running -> wait status).
+        
+        3. START INGESTION:
+           - Eğer önceki kontrollerden bir run bulunamazsa (False), İŞTE SADECE O ZAMAN 'Start Ingestion' başlatılır.
+        
+        4. CHECK DRUID RUN STATUS:
+           - Başlatılan veya mevcut olan run'ın bitmesi beklenir.
+           - Başarılı olursa (Success) işlem tamamlanır.
+           - Hata alırsak (Fail) Exception fırlatılır. 
+        
+        *SONUÇ*: Exception fırlatıldığında Airflow taskı baştan başlatır (1. adıma döner). 
+        Böylece log/run kontrolü yapmadan asla yeni bir Ingestion POST isteği atılmaz!
         """
         pass
 
@@ -78,6 +106,12 @@ def druid_ingestion_workflow():
     # Başlangıç ve Tarih/Klasör Ayarlaması
     calculated_date = calculate_folder_date()
     folder_task = get_todays_expected_folder(target_date_str=calculated_date)
+    """
+    Görseldeki Adım: 'whats todays expected folder/files' (DAG Run Date - T-5 is Folder name)
+    Not: Burada T-5 gününün klasör adı hesaplanır.
+    - Gerekli tarih işlemleri yapılır.
+    - Hedef klasör yolu string olarak return edilir.
+    """  
 
     start >> calculated_date
 
