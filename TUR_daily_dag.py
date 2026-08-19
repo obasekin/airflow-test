@@ -9,16 +9,16 @@ local_tz = pendulum.timezone("Europe/Istanbul")
 
 # --- DEFAULT ARGS (TÜM TASKLAR İÇİN GEÇERLİ VARSAYILANLAR) ---
 default_args = {
-    "owner": "data_engineering",
+    "owner": "obasekin",
     "retries": 3,                         # Hata durumunda varsayılan retry sayısı
     "retry_delay": timedelta(minutes=5),  # Hata sonrası yeniden denemeden önce bekleme süresi
     "email_on_failure": True,             # Fail durumunda mail at!
     "email_on_retry": False,              # Sadece fail'da atsın, her retry'da spam yapmasın isterseniz
-    "email": ["data_team@sirketiniz.com"] # Uyarıların gideceği mail adresi
+    "email": ["data@arcanor.com"] # Uyarıların gideceği mail adresi
 }
 
 @dag(
-    dag_id="druid_safe_ingestion_workflow",
+    dag_id="TUR_daily_dag",
     default_args=default_args,
     start_date=pendulum.datetime(2026, 8, 18, tz=local_tz),
     schedule="0 12 * * *",  # Her gün Türkiye saatiyle öğlen 12:00
