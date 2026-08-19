@@ -28,7 +28,7 @@ default_args = {
 def druid_ingestion_workflow():
 
     # =========================================================================
-    # 1. ORTAK SENSÖR VE INGESTION TASKLARI (Şablon olarak kullanılacaklar)
+    # 1. ORTAK SENSÖR VE INGESTION TASKLARI
     # =========================================================================
     
     @task.sensor(
@@ -40,8 +40,6 @@ def druid_ingestion_workflow():
     )
     def check_manifest_ready(folder_name: str, k_suffix: str) -> PokeReturnValue:
         """ 24 saat boyunca manifest bekleyen sensör. """
-        # Not: Gerçek kodunuzda klasör kontrolü yapılacak.
-        # Hazır olduğunda is_ready = True olacak ve folder_name XCom ile sonrasına aktarılacak.
         is_ready = True 
         return PokeReturnValue(is_done=is_ready, xcom_value=folder_name)
 
@@ -53,8 +51,6 @@ def druid_ingestion_workflow():
     # =========================================================================
     # 2. GÜNLÜK İŞLEM İSKELETİ (TEKRAR KULLANILABİLİR TASK GROUP)
     # =========================================================================
-    # Bu grup, kendisine verilen 'offset_days' (kaç gün geriye gidileceği) 
-    # bilgisine göre o günün tüm k1..k4 işlemlerini halleder.
     
     @task_group
     def daily_ingestion_process(offset_days: int):
@@ -73,23 +69,19 @@ def druid_ingestion_workflow():
         folder_task = get_todays_expected_folder(calc_date)
 
         for k in ["k1", "k2", "k3", "k4"]:
-            @task_group(group_id=f"group_{k}")
+            # K Grupları için Soluk Lila renk eklendi
+            @task_group(group_id=f"group_{k}", ui_color="#F4ECF7")
             def process_k_group(folder_arg: str, current_k: str):
                 
-                # 1. Manifest çalışır ve başarılı olunca klasör yolunu dışarı aktarır
                 manifest_result_folder = check_manifest_ready.override(task_id=f"is_manifest_ready_{current_k}")(
                     folder_name=folder_arg, 
                     k_suffix=current_k
                 )
                 
-                # 2. Ingestion taskı, parametresini manifest taskının sonucundan alır.
-                # Veri bağımlılığı (Data Dependency) sayesinde Airflow UI'da oklar düzgün çizilir.
                 ingestion = execute_idempotent_druid_ingestion.override(task_id=f"ingestion_process_{current_k}")(
                     folder_name=manifest_result_folder, 
                     k_suffix=current_k
                 )
-                
-                # Artık "manifest >> ingestion" YAZMIYORUZ.
 
             k_group = process_k_group(folder_arg=folder_task, current_k=k)
             folder_task >> k_group
@@ -100,14 +92,12 @@ def druid_ingestion_workflow():
 
     @task.branch(task_id="branch_weekend_or_weekday")
     def check_weekend_or_weekday(**kwargs):
-        # 5 = Cumartesi, 6 = Pazar
         if kwargs['logical_date'].weekday() in (5, 6):
             return "is_weekend"
         return "is_weekday"
 
     @task.branch(task_id="branch_monday_or_regular")
     def check_monday_or_regular(**kwargs):
-        # 0 = Pazartesi
         if kwargs['logical_date'].weekday() == 0:
             return "is_monday"
         return "is_regular_weekday"
@@ -117,19 +107,14 @@ def druid_ingestion_workflow():
     # =========================================================================
     
     start = EmptyOperator(task_id="start")
-    
-    # DİKKAT: Branching kullanıldığında 'end' taskının çalışabilmesi için 
-    # trigger_rule "none_failed_min_one_success" olmalıdır.
     end = EmptyOperator(task_id="end", trigger_rule="none_failed_min_one_success")
 
-    # Dallanma kontrol tasklarını oluştur
     check_day_type = check_weekend_or_weekday()
     check_monday_type = check_monday_or_regular()
 
-    # Yönlendirme (Dummy/Empty) Taskları
     is_weekend = EmptyOperator(task_id="is_weekend")
     is_weekday = EmptyOperator(task_id="is_weekday")
-    pass_task = EmptyOperator(task_id="pass_task") # Hafta sonu hiçbir şey yapmadan geçilecek adım
+    pass_task = EmptyOperator(task_id="pass_task") 
     
     is_monday = EmptyOperator(task_id="is_monday")
     is_regular_weekday = EmptyOperator(task_id="is_regular_weekday")
@@ -137,21 +122,38 @@ def druid_ingestion_workflow():
     # --- ANA AKIŞI BAĞLAMA ---
     start >> check_day_type
 
-    # SENARYO 1: HAFTA SONU (Direkt end'e gider)
+    # SENARYO 1: HAFTA SONU
     check_day_type >> is_weekend >> pass_task >> end
 
     # SENARYO 2: HAFTA İÇİ
     check_day_type >> is_weekday >> check_monday_type
 
-    # SENARYO 2.A: NORMAL HAFTA İÇİ (Salı, Çarşamba, Perşembe, Cuma)
-    regular_day = daily_ingestion_process.override(group_id="process_current_day")(offset_days=5)
+    # SENARYO 2.A: NORMAL HAFTA İÇİ (Soluk Turuncu Renk)
+    regular_day = daily_ingestion_process.override(
+        group_id="process_current_day",
+        ui_color="#FDEBD0"
+    )(offset_days=5)
     
     check_monday_type >> is_regular_weekday >> regular_day >> end
 
-    # SENARYO 2.B: PAZARTESİ (3 Günlük işlem paralel başlar)
-    monday_for_sat = daily_ingestion_process.override(group_id="process_saturday_T7")(offset_days=7)
-    monday_for_sun = daily_ingestion_process.override(group_id="process_sunday_T6")(offset_days=6)
-    monday_for_mon = daily_ingestion_process.override(group_id="process_monday_T5")(offset_days=5)
+    # SENARYO 2.B: PAZARTESİ (Renkli Paralel Gruplar)
+    # Cumartesi birikimi (Soluk Yeşil)
+    monday_for_sat = daily_ingestion_process.override(
+        group_id="process_saturday_T7",
+        ui_color="#EAFAF1"
+    )(offset_days=7)
+    
+    # Pazar birikimi (Soluk Mavi)
+    monday_for_sun = daily_ingestion_process.override(
+        group_id="process_sunday_T6",
+        ui_color="#E8F4F8"
+    )(offset_days=6)
+    
+    # Pazartesi kendi işi (Soluk Turuncu)
+    monday_for_mon = daily_ingestion_process.override(
+        group_id="process_monday_T5",
+        ui_color="#FDEBD0"
+    )(offset_days=5)
 
     check_monday_type >> is_monday >> [monday_for_sat, monday_for_sun, monday_for_mon]
     monday_for_sat >> end
