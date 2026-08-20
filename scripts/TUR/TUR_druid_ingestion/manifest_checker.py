@@ -67,7 +67,7 @@ def find_manifest(folder_name: str, k_suffix: str) -> Optional[Dict[str, str]]:
         if manifest_prefix != expected_prefix:
             continue
 
-        if not file_name.endswith("_batch_manifest.txt"):
+        if not file_name.endswith("manifest.txt"):
             continue
 
         manifest_path = (
