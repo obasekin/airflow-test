@@ -3,6 +3,7 @@ import pendulum
 from airflow.decorators import dag, task, task_group
 from airflow.operators.empty import EmptyOperator
 from airflow.sensors.base import PokeReturnValue
+from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
 from datetime import timedelta
 
@@ -116,92 +117,45 @@ def druid_ingestion_workflow():
     def get_todays_expected_folder(
         target_date_str: str,
     ) -> str:
-        """
-        Target date'ten GCS folder path oluşturur.
 
-        Ayrıca:
-          1. Folder gerçekten var mı?
-          2. Folder'ın içinde herhangi bir şey var mı?
+        hook = GCSHook(
+            gcp_conn_id="google_cloud_default"
+        )
 
-        kontrol eder.
+        bucket_name = "arcanor-orion"
 
-        Örnek:
+        date_path = target_date_str.replace("-", "/")
 
-            target_date_str = 2026-08-15
-
-        sonucu:
-
-            gs://arcanor-orion/output/mobility/TUR/2026/08/15/
-        """
-
-        import gcsfs
-
-        # ----------------------------------------------------
-        # 2026-08-15
-        #       ↓
-        # 2026/08/15
-        # ----------------------------------------------------
-
-        date_path = target_date_str.replace(
-            "-",
-            "/",
+        prefix = (
+            f"output/mobility/TUR/"
+            f"{date_path}/"
         )
 
         folder_path = (
-            f"{GCS_BASE_PATH}/{date_path}/"
+            f"gs://{bucket_name}/{prefix}"
         )
 
-        print("=" * 80)
-        print("CHECK GCS FOLDER")
-        print("=" * 80)
-        print(f"Target date : {target_date_str}")
-        print(f"GCS folder  : {folder_path}")
-        print("=" * 80)
+        print(f"Checking GCS folder: {folder_path}")
 
-        fs = gcsfs.GCSFileSystem()
+        # Folder içerisinde object var mı?
+        objects = hook.list(
+            bucket_name=bucket_name,
+            prefix=prefix,
+        )
 
-        # ----------------------------------------------------
-        # 1. Folder var mı?
-        # ----------------------------------------------------
-
-        if not fs.exists(folder_path):
-
+        if not objects:
             raise FileNotFoundError(
-                f"GCS folder does not exist: {folder_path}"
-            )
-
-        print(
-            f"GCS folder exists: {folder_path}"
-        )
-
-        # ----------------------------------------------------
-        # 2. Folder'ın içerisinde bir şey var mı?
-        # ----------------------------------------------------
-
-        contents = fs.ls(
-            folder_path
-        )
-
-        if not contents:
-
-            raise FileNotFoundError(
-                f"GCS folder exists but is empty: "
+                f"GCS folder does not exist or is empty: "
                 f"{folder_path}"
             )
 
         print(
-            f"GCS folder contains "
-            f"{len(contents)} item(s)."
+            f"GCS folder exists and contains "
+            f"{len(objects)} object(s)."
         )
 
-        for item in contents:
-            print(f"  - {item}")
-
-        print("=" * 80)
-
-        # ----------------------------------------------------
-        # Tam GCS path'i aşağıya aktar
-        # ----------------------------------------------------
+        for obj in objects:
+            print(f"  - gs://{bucket_name}/{obj}")
 
         return folder_path
 
@@ -212,10 +166,11 @@ def druid_ingestion_workflow():
 
     @task.sensor(
         poke_interval=60 * 5,
-        timeout=86400,
+        timeout=6 * 60 * 60,
         mode="reschedule",
         execution_timeout=timedelta(hours=24),
         retries=3,
+        retry_delay=timedelta(minutes=5),
     )
     def check_manifest_ready(
         folder_name: str,
