@@ -15,6 +15,13 @@ local_tz = pendulum.timezone("Europe/Istanbul")
 
 
 # ============================================================
+# GCS BASE PATH
+# ============================================================
+
+GCS_BASE_PATH = "gs://arcanor-orion/output/mobility/TUR"
+
+
+# ============================================================
 # DEFAULT ARGS
 # ============================================================
 
@@ -54,7 +61,153 @@ default_args = {
 def druid_ingestion_workflow():
 
     # ========================================================
-    # 1. MANIFEST SENSOR
+    # 1. CALCULATE TARGET DATE
+    # ========================================================
+
+    @task
+    def calculate_folder_date(
+        offset_days: int,
+        **kwargs,
+    ) -> str:
+        """
+        DAG logical date'inden offset_days kadar geriye gider.
+
+        Örnek:
+
+            logical_date = 2026-08-20
+            offset_days  = 5
+
+            result = 2026-08-15
+
+        Ay ve yıl geçişlerini Pendulum otomatik yönetir.
+
+        Örnek:
+
+            2026-01-03 - 5 gün
+            = 2025-12-29
+        """
+
+        run_date = kwargs["logical_date"]
+
+        target_date = run_date.subtract(
+            days=offset_days
+        )
+
+        target_date_str = target_date.strftime(
+            "%Y-%m-%d"
+        )
+
+        print("=" * 80)
+        print("CALCULATE FOLDER DATE")
+        print("=" * 80)
+        print(f"Logical date : {run_date}")
+        print(f"Offset days  : {offset_days}")
+        print(f"Target date  : {target_date_str}")
+        print("=" * 80)
+
+        return target_date_str
+
+
+    # ========================================================
+    # 2. GET / CHECK GCS FOLDER
+    # ========================================================
+
+    @task
+    def get_todays_expected_folder(
+        target_date_str: str,
+    ) -> str:
+        """
+        Target date'ten GCS folder path oluşturur.
+
+        Ayrıca:
+          1. Folder gerçekten var mı?
+          2. Folder'ın içinde herhangi bir şey var mı?
+
+        kontrol eder.
+
+        Örnek:
+
+            target_date_str = 2026-08-15
+
+        sonucu:
+
+            gs://arcanor-orion/output/mobility/TUR/2026/08/15/
+        """
+
+        import gcsfs
+
+        # ----------------------------------------------------
+        # 2026-08-15
+        #       ↓
+        # 2026/08/15
+        # ----------------------------------------------------
+
+        date_path = target_date_str.replace(
+            "-",
+            "/",
+        )
+
+        folder_path = (
+            f"{GCS_BASE_PATH}/{date_path}/"
+        )
+
+        print("=" * 80)
+        print("CHECK GCS FOLDER")
+        print("=" * 80)
+        print(f"Target date : {target_date_str}")
+        print(f"GCS folder  : {folder_path}")
+        print("=" * 80)
+
+        fs = gcsfs.GCSFileSystem()
+
+        # ----------------------------------------------------
+        # 1. Folder var mı?
+        # ----------------------------------------------------
+
+        if not fs.exists(folder_path):
+
+            raise FileNotFoundError(
+                f"GCS folder does not exist: {folder_path}"
+            )
+
+        print(
+            f"GCS folder exists: {folder_path}"
+        )
+
+        # ----------------------------------------------------
+        # 2. Folder'ın içerisinde bir şey var mı?
+        # ----------------------------------------------------
+
+        contents = fs.ls(
+            folder_path
+        )
+
+        if not contents:
+
+            raise FileNotFoundError(
+                f"GCS folder exists but is empty: "
+                f"{folder_path}"
+            )
+
+        print(
+            f"GCS folder contains "
+            f"{len(contents)} item(s)."
+        )
+
+        for item in contents:
+            print(f"  - {item}")
+
+        print("=" * 80)
+
+        # ----------------------------------------------------
+        # Tam GCS path'i aşağıya aktar
+        # ----------------------------------------------------
+
+        return folder_path
+
+
+    # ========================================================
+    # 3. MANIFEST SENSOR
     # ========================================================
 
     @task.sensor(
@@ -69,10 +222,13 @@ def druid_ingestion_workflow():
         k_suffix: str,
     ) -> PokeReturnValue:
 
-        from scripts.TUR.manifest_checker import find_manifest
+        from scripts.TUR.manifest_checker import (
+            find_manifest
+        )
 
         print("=" * 80)
-        print("Checking manifest")
+        print("CHECK MANIFEST")
+        print("=" * 80)
         print(f"Folder : {folder_name}")
         print(f"K      : {k_suffix}")
         print("=" * 80)
@@ -83,14 +239,18 @@ def druid_ingestion_workflow():
         )
 
         # ----------------------------------------------------
-        # Manifest henüz gelmemiş
+        # Manifest henüz yok
         # ----------------------------------------------------
 
         if result is None:
 
             print(
-                f"Manifest not found for {k_suffix}. "
-                f"Sensor will retry."
+                f"Manifest not found for {k_suffix}."
+            )
+
+            print(
+                "Sensor will retry in "
+                "5 minutes."
             )
 
             return PokeReturnValue(
@@ -102,9 +262,23 @@ def druid_ingestion_workflow():
         # ----------------------------------------------------
 
         print("Manifest found!")
-        print(f"Folder        : {result['folder_name']}")
-        print(f"File name     : {result['file_name']}")
-        print(f"Manifest path : {result['manifest_path']}")
+
+        print(
+            f"Folder        : "
+            f"{result['folder_name']}"
+        )
+
+        print(
+            f"File name     : "
+            f"{result['file_name']}"
+        )
+
+        print(
+            f"Manifest path : "
+            f"{result['manifest_path']}"
+        )
+
+        print("=" * 80)
 
         return PokeReturnValue(
             is_done=True,
@@ -113,7 +287,7 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 2. DRUID INGESTION
+    # 4. DRUID INGESTION
     # ========================================================
 
     @task(
@@ -125,12 +299,20 @@ def druid_ingestion_workflow():
         k_suffix: str,
     ):
 
-        folder_name = manifest_info["folder_name"]
-        file_name = manifest_info["file_name"]
-        manifest_path = manifest_info["manifest_path"]
+        folder_name = manifest_info[
+            "folder_name"
+        ]
+
+        file_name = manifest_info[
+            "file_name"
+        ]
+
+        manifest_path = manifest_info[
+            "manifest_path"
+        ]
 
         print("=" * 80)
-        print("Druid ingestion")
+        print("DRUID INGESTION")
         print("=" * 80)
 
         print(f"K             : {k_suffix}")
@@ -139,72 +321,37 @@ def druid_ingestion_workflow():
         print(f"Manifest path : {manifest_path}")
 
         # ====================================================
-        # BURASI SONRA DOLDURULACAK
-        #
-        # Druid ingestion burada manifest_path kullanacak.
+        # Druid ingestion burada yapılacak.
         # ====================================================
 
         pass
 
 
     # ========================================================
-    # 3. DAILY INGESTION PROCESS
+    # 5. DAILY INGESTION PROCESS
     # ========================================================
 
     @task_group
-    def daily_ingestion_process(offset_days: int):
+    def daily_ingestion_process(
+        offset_days: int,
+    ):
 
         # ----------------------------------------------------
         # Calculate target date
         # ----------------------------------------------------
 
-        @task
-        def calculate_folder_date(
-            offset: int,
-            **kwargs,
-        ) -> str:
-
-            run_date = kwargs["logical_date"]
-
-            target_date = run_date.subtract(
-                days=offset
-            )
-
-            return target_date.strftime("%Y-%m-%d")
-
-
-        # ----------------------------------------------------
-        # Generate GCS folder path
-        # ----------------------------------------------------
-
-        @task
-        def get_todays_expected_folder(
-            target_date_str: str,
-        ) -> str:
-
-            # 2026-08-13
-            #      ↓
-            # 2026/08/13
-
-            date_path = target_date_str.replace("-", "/")
-
-            folder = (
-                "gs://arcanor-orion/"
-                "output/mobility/TUR/"
-                f"{date_path}/"
-            )
-
-            print(f"Expected GCS folder: {folder}")
-
-            return folder
-
-
         calc_date = calculate_folder_date(
-            offset_days
+            offset_days=offset_days,
         )
 
-        folder_task = get_todays_expected_folder(
-            calc_date
+        # ----------------------------------------------------
+        # Generate + validate GCS folder
+        # ----------------------------------------------------
+
+        folder_task = (
+            get_todays_expected_folder(
+                target_date_str=calc_date,
+            )
         )
 
 
@@ -212,7 +359,12 @@ def druid_ingestion_workflow():
         # K1 / K2 / K3 / K4
         # ----------------------------------------------------
 
-        for k in ["k1", "k2", "k3", "k4"]:
+        for k in [
+            "k1",
+            "k2",
+            "k3",
+            "k4",
+        ]:
 
             @task_group(
                 group_id=f"group_{k}",
@@ -227,11 +379,16 @@ def druid_ingestion_workflow():
                 # Manifest sensor
                 # --------------------------------------------
 
-                manifest_result = check_manifest_ready.override(
-                    task_id=f"is_manifest_ready_{current_k}"
-                )(
-                    folder_name=folder_arg,
-                    k_suffix=current_k,
+                manifest_result = (
+                    check_manifest_ready.override(
+                        task_id=(
+                            f"is_manifest_ready_"
+                            f"{current_k}"
+                        )
+                    )(
+                        folder_name=folder_arg,
+                        k_suffix=current_k,
+                    )
                 )
 
                 # --------------------------------------------
@@ -240,7 +397,10 @@ def druid_ingestion_workflow():
 
                 ingestion = (
                     execute_idempotent_druid_ingestion.override(
-                        task_id=f"ingestion_process_{current_k}"
+                        task_id=(
+                            f"ingestion_process_"
+                            f"{current_k}"
+                        )
                     )(
                         manifest_info=manifest_result,
                         k_suffix=current_k,
@@ -259,15 +419,20 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 4. BRANCHING
+    # 6. BRANCHING
     # ========================================================
 
     @task.branch(
         task_id="branch_weekend_or_weekday"
     )
-    def check_weekend_or_weekday(**kwargs):
+    def check_weekend_or_weekday(
+        **kwargs,
+    ):
 
-        if kwargs["logical_date"].weekday() in (5, 6):
+        if kwargs[
+            "logical_date"
+        ].weekday() in (5, 6):
+
             return "is_weekend"
 
         return "is_weekday"
@@ -276,16 +441,21 @@ def druid_ingestion_workflow():
     @task.branch(
         task_id="branch_monday_or_regular"
     )
-    def check_monday_or_regular(**kwargs):
+    def check_monday_or_regular(
+        **kwargs,
+    ):
 
-        if kwargs["logical_date"].weekday() == 0:
+        if kwargs[
+            "logical_date"
+        ].weekday() == 0:
+
             return "is_monday"
 
         return "is_regular_weekday"
 
 
     # ========================================================
-    # 5. FLOW NODES
+    # 7. MAIN FLOW NODES
     # ========================================================
 
     start = EmptyOperator(
@@ -297,9 +467,13 @@ def druid_ingestion_workflow():
         trigger_rule="none_failed_min_one_success",
     )
 
-    check_day_type = check_weekend_or_weekday()
+    check_day_type = (
+        check_weekend_or_weekday()
+    )
 
-    check_monday_type = check_monday_or_regular()
+    check_monday_type = (
+        check_monday_or_regular()
+    )
 
     is_weekend = EmptyOperator(
         task_id="is_weekend"
@@ -323,14 +497,14 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 6. MAIN FLOW
+    # 8. START
     # ========================================================
 
     start >> check_day_type
 
 
     # ========================================================
-    # WEEKEND
+    # 9. WEEKEND
     # ========================================================
 
     check_day_type >> is_weekend
@@ -339,7 +513,7 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # WEEKDAY
+    # 10. WEEKDAY
     # ========================================================
 
     check_day_type >> is_weekday
@@ -348,16 +522,18 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # NORMAL WEEKDAY
+    # 11. NORMAL WEEKDAY
     #
     # T-5
     # ========================================================
 
-    regular_day = daily_ingestion_process.override(
-        group_id="process_current_day",
-        ui_color="#FDEBD0",
-    )(
-        offset_days=5
+    regular_day = (
+        daily_ingestion_process.override(
+            group_id="process_current_day",
+            ui_color="#FDEBD0",
+        )(
+            offset_days=5
+        )
     )
 
     check_monday_type >> is_regular_weekday
@@ -366,7 +542,7 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # MONDAY
+    # 12. MONDAY
     #
     # Saturday -> T-7
     # Sunday   -> T-6
@@ -375,29 +551,32 @@ def druid_ingestion_workflow():
     # Üçü paralel çalışır.
     # ========================================================
 
-    monday_for_sat = daily_ingestion_process.override(
-        group_id="process_saturday_T7",
-        ui_color="#EAFAF1",
-    )(
-        offset_days=7
+    monday_for_sat = (
+        daily_ingestion_process.override(
+            group_id="process_saturday_T7",
+            ui_color="#EAFAF1",
+        )(
+            offset_days=7
+        )
     )
 
-
-    monday_for_sun = daily_ingestion_process.override(
-        group_id="process_sunday_T6",
-        ui_color="#E8F4F8",
-    )(
-        offset_days=6
+    monday_for_sun = (
+        daily_ingestion_process.override(
+            group_id="process_sunday_T6",
+            ui_color="#E8F4F8",
+        )(
+            offset_days=6
+        )
     )
 
-
-    monday_for_mon = daily_ingestion_process.override(
-        group_id="process_monday_T5",
-        ui_color="#FDEBD0",
-    )(
-        offset_days=5
+    monday_for_mon = (
+        daily_ingestion_process.override(
+            group_id="process_monday_T5",
+            ui_color="#FDEBD0",
+        )(
+            offset_days=5
+        )
     )
-
 
     check_monday_type >> is_monday
 
