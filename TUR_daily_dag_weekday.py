@@ -16,10 +16,12 @@ local_tz = pendulum.timezone("Europe/Istanbul")
 
 
 # ============================================================
-# GCS BASE PATH
+# GCS
 # ============================================================
 
-GCS_BASE_PATH = "gs://arcanor-orion/output/mobility/TUR"
+GCS_BUCKET_NAME = "arcanor-orion"
+
+GCS_BASE_PATH = "output/mobility/TUR"
 
 
 # ============================================================
@@ -70,23 +72,6 @@ def druid_ingestion_workflow():
         offset_days: int,
         **kwargs,
     ) -> str:
-        """
-        DAG logical date'inden offset_days kadar geriye gider.
-
-        Örnek:
-
-            logical_date = 2026-08-20
-            offset_days  = 5
-
-            result = 2026-08-15
-
-        Ay ve yıl geçişlerini Pendulum otomatik yönetir.
-
-        Örnek:
-
-            2026-01-03 - 5 gün
-            = 2025-12-29
-        """
 
         run_date = kwargs["logical_date"]
 
@@ -122,31 +107,36 @@ def druid_ingestion_workflow():
             gcp_conn_id="google_cloud_default"
         )
 
-        bucket_name = "arcanor-orion"
-
-        date_path = target_date_str.replace("-", "/")
+        date_path = target_date_str.replace(
+            "-",
+            "/",
+        )
 
         prefix = (
-            f"output/mobility/TUR/"
+            f"{GCS_BASE_PATH}/"
             f"{date_path}/"
         )
 
         folder_path = (
-            f"gs://{bucket_name}/{prefix}"
+            f"gs://{GCS_BUCKET_NAME}/"
+            f"{prefix}"
         )
 
-        print(f"Checking GCS folder: {folder_path}")
+        print(
+            f"Checking GCS folder: "
+            f"{folder_path}"
+        )
 
-        # Folder içerisinde object var mı?
         objects = hook.list(
-            bucket_name=bucket_name,
+            bucket_name=GCS_BUCKET_NAME,
             prefix=prefix,
         )
 
         if not objects:
+
             raise FileNotFoundError(
-                f"GCS folder does not exist or is empty: "
-                f"{folder_path}"
+                f"GCS folder does not exist "
+                f"or is empty: {folder_path}"
             )
 
         print(
@@ -155,7 +145,11 @@ def druid_ingestion_workflow():
         )
 
         for obj in objects:
-            print(f"  - gs://{bucket_name}/{obj}")
+            print(
+                f"  - gs://"
+                f"{GCS_BUCKET_NAME}/"
+                f"{obj}"
+            )
 
         return folder_path
 
@@ -168,7 +162,7 @@ def druid_ingestion_workflow():
         poke_interval=60 * 5,
         timeout=6 * 60 * 60,
         mode="reschedule",
-        execution_timeout=timedelta(hours=24),
+        execution_timeout=timedelta(hours=6),
         retries=3,
         retry_delay=timedelta(minutes=5),
     )
@@ -200,7 +194,8 @@ def druid_ingestion_workflow():
         if result is None:
 
             print(
-                f"Manifest not found for {k_suffix}."
+                f"Manifest not found for "
+                f"{k_suffix}."
             )
 
             print(
@@ -242,7 +237,135 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 4. DRUID INGESTION
+    # 4. GET PARQUET FILES
+    # ========================================================
+
+    @task(
+        execution_timeout=timedelta(hours=1),
+        retries=3,
+    )
+    def get_parquet_files(
+        manifest_info: dict,
+    ) -> list:
+
+        hook = GCSHook(
+            gcp_conn_id="google_cloud_default"
+        )
+
+        folder_name = manifest_info[
+            "folder_name"
+        ]
+
+        file_name = manifest_info[
+            "file_name"
+        ]
+
+        # ----------------------------------------------------
+        # gs://bucket/path/ formatından
+        # bucket ve prefix'i ayır
+        # ----------------------------------------------------
+
+        folder_without_scheme = (
+            folder_name
+            .replace("gs://", "", 1)
+        )
+
+        bucket_name, folder_prefix = (
+            folder_without_scheme.split(
+                "/",
+                1,
+            )
+        )
+
+        folder_prefix = (
+            folder_prefix.rstrip("/")
+            + "/"
+        )
+
+        print("=" * 80)
+        print("GET PARQUET FILES")
+        print("=" * 80)
+        print(f"Folder : {folder_name}")
+        print(f"Prefix : {file_name}")
+        print("=" * 80)
+
+        # ----------------------------------------------------
+        # Folder altındaki bütün object'leri al
+        # ----------------------------------------------------
+
+        objects = hook.list(
+            bucket_name=bucket_name,
+            prefix=folder_prefix,
+        )
+
+        parquet_files = []
+
+        for object_name in objects:
+
+            object_file_name = (
+                object_name
+               .rstrip("/")
+                .split("/")[-1]
+            )
+
+            # ------------------------------------------------
+            # Sadece:
+            #
+            # prefix ile başlayan
+            # VE
+            # .parquet ile biten
+            #
+            # dosyaları al
+            # ------------------------------------------------
+
+            if not object_file_name.startswith(
+                file_name
+            ):
+                continue
+
+            if not object_file_name.endswith(
+                ".parquet"
+            ):
+                continue
+
+            parquet_path = (
+                f"gs://{bucket_name}/"
+                f"{object_name}"
+            )
+
+            parquet_files.append(
+                parquet_path
+            )
+
+        # ----------------------------------------------------
+        # Sonuç
+        # ----------------------------------------------------
+
+        print(
+            f"Found {len(parquet_files)} "
+            f"parquet file(s)."
+        )
+
+        for parquet_file in parquet_files:
+            print(
+                f"  - {parquet_file}"
+            )
+
+        if not parquet_files:
+
+            raise FileNotFoundError(
+                f"No parquet files found "
+                f"for prefix '{file_name}' "
+                f"in {folder_name}"
+            )
+
+        print("=" * 80)
+
+        return parquet_files
+
+
+    # ========================================================
+    # 5. DRUID INGESTION
     # ========================================================
 
     @task(
@@ -251,6 +374,7 @@ def druid_ingestion_workflow():
     )
     def execute_idempotent_druid_ingestion(
         manifest_info: dict,
+        parquet_files: list,
         k_suffix: str,
     ):
 
@@ -270,20 +394,51 @@ def druid_ingestion_workflow():
         print("DRUID INGESTION")
         print("=" * 80)
 
-        print(f"K             : {k_suffix}")
-        print(f"Folder        : {folder_name}")
-        print(f"File name     : {file_name}")
-        print(f"Manifest path : {manifest_path}")
+        print(
+            f"K             : {k_suffix}"
+        )
+
+        print(
+            f"Folder        : {folder_name}"
+        )
+
+        print(
+            f"File name     : {file_name}"
+        )
+
+        print(
+            f"Manifest path : {manifest_path}"
+        )
+
+        print(
+            f"Parquet count : "
+            f"{len(parquet_files)}"
+        )
+
+        print("=" * 80)
+        print("PARQUET FILES")
+        print("=" * 80)
+
+        for parquet_file in parquet_files:
+            print(parquet_file)
 
         # ====================================================
         # Druid ingestion burada yapılacak.
+        #
+        # Artık elimizde:
+        #
+        # manifest_info
+        # parquet_files
+        # k_suffix
+        #
+        # var.
         # ====================================================
 
         pass
 
 
     # ========================================================
-    # 5. DAILY INGESTION PROCESS
+    # 6. DAILY INGESTION PROCESS
     # ========================================================
 
     @task_group
@@ -308,7 +463,6 @@ def druid_ingestion_workflow():
                 target_date_str=calc_date,
             )
         )
-
 
         # ----------------------------------------------------
         # K1 / K2 / K3 / K4
@@ -347,6 +501,25 @@ def druid_ingestion_workflow():
                 )
 
                 # --------------------------------------------
+                # Parquet files
+                #
+                # Manifest bulunduğunda çalışır.
+                # Manifest'in "_" öncesindeki prefix'i
+                # kullanarak parquet dosyalarını bulur.
+                # --------------------------------------------
+
+                parquet_files = (
+                    get_parquet_files.override(
+                        task_id=(
+                            f"get_parquet_files_"
+                            f"{current_k}"
+                        )
+                    )(
+                        manifest_info=manifest_result,
+                    )
+                )
+
+                # --------------------------------------------
                 # Druid ingestion
                 # --------------------------------------------
 
@@ -358,11 +531,14 @@ def druid_ingestion_workflow():
                         )
                     )(
                         manifest_info=manifest_result,
+                        parquet_files=parquet_files,
                         k_suffix=current_k,
                     )
                 )
 
-                manifest_result >> ingestion
+                # Explicit dependencies
+                manifest_result >> parquet_files
+                parquet_files >> ingestion
 
 
             k_group = process_k_group(
@@ -374,7 +550,7 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 6. BRANCHING
+    # 7. BRANCHING
     # ========================================================
 
     @task.branch(
@@ -410,7 +586,7 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 7. MAIN FLOW NODES
+    # 8. MAIN FLOW NODES
     # ========================================================
 
     start = EmptyOperator(
@@ -452,14 +628,14 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 8. START
+    # 9. START
     # ========================================================
 
     start >> check_day_type
 
 
     # ========================================================
-    # 9. WEEKEND
+    # 10. WEEKEND
     # ========================================================
 
     check_day_type >> is_weekend
@@ -468,7 +644,7 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 10. WEEKDAY
+    # 11. WEEKDAY
     # ========================================================
 
     check_day_type >> is_weekday
@@ -477,9 +653,7 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 11. NORMAL WEEKDAY
-    #
-    # T-5
+    # 12. NORMAL WEEKDAY - T5
     # ========================================================
 
     regular_day = (
@@ -497,13 +671,11 @@ def druid_ingestion_workflow():
 
 
     # ========================================================
-    # 12. MONDAY
+    # 13. MONDAY
     #
-    # Saturday -> T-7
-    # Sunday   -> T-6
-    # Monday   -> T-5
-    #
-    # Üçü paralel çalışır.
+    # Saturday -> T7
+    # Sunday   -> T6
+    # Monday   -> T5
     # ========================================================
 
     monday_for_sat = (

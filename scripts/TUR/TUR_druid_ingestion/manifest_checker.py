@@ -7,7 +7,7 @@ K_MANIFEST_PREFIX = {
     "k1": "iris",
     "k2": "abc",
     "k3": "xyz",
-    "k4": "old_data",
+    "k4": "veraset",
 }
 
 
