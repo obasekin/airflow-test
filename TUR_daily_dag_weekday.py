@@ -6,7 +6,7 @@ from airflow.sensors.base import PokeReturnValue
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
 from datetime import timedelta
-
+import json
 
 # ============================================================
 # TÜRKİYE SAATİ
@@ -378,6 +378,16 @@ def druid_ingestion_workflow():
         k_suffix: str,
     ):
 
+        from airflow.hooks.base import BaseHook
+
+        from scripts.TUR.TUR_druid_ingestion.ingestion_druid import (
+            run_ingestion,
+        )
+
+        # ========================================================
+        # MANIFEST INFORMATION
+        # ========================================================
+
         folder_name = manifest_info[
             "folder_name"
         ]
@@ -411,30 +421,70 @@ def druid_ingestion_workflow():
         )
 
         print(
-            f"Parquet count : "
-            f"{len(parquet_files)}"
+            f"Parquet count : {len(parquet_files)}"
         )
 
-        print("=" * 80)
-        print("PARQUET FILES")
         print("=" * 80)
 
         for parquet_file in parquet_files:
             print(parquet_file)
 
-        # ====================================================
-        # Druid ingestion burada yapılacak.
-        #
-        # Artık elimizde:
-        #
-        # manifest_info
-        # parquet_files
-        # k_suffix
-        #
-        # var.
-        # ====================================================
+        # ========================================================
+        # DRUID CONNECTION
+        # ========================================================
 
-        pass
+        conn = BaseHook.get_connection(
+            "druid_default"
+        )
+
+        druid_url = (
+            conn.host or ""
+        ).rstrip("/")
+
+        username = conn.login
+        password = conn.password
+
+        if not druid_url:
+            raise ValueError(
+                "Druid URL is not configured"
+            )
+
+        if not username:
+            raise ValueError(
+                "Druid username is not configured"
+            )
+
+        if not password:
+            raise ValueError(
+                "Druid password is not configured"
+            )
+
+        # ========================================================
+        # INGESTION
+        # ========================================================
+
+        result = run_ingestion(
+            parquet_files=parquet_files,
+            druid_url=druid_url,
+            username=username,
+            password=password,
+        )
+
+        print("=" * 80)
+        print("DRUID INGESTION RESULT")
+        print("=" * 80)
+
+        print(
+            json.dumps(
+                result,
+                indent=2,
+                ensure_ascii=False,
+            )
+        )
+
+        print("=" * 80)
+
+        return result
 
 
     # ========================================================
@@ -537,8 +587,7 @@ def druid_ingestion_workflow():
                 )
 
                 # Explicit dependencies
-                manifest_result >> parquet_files
-                parquet_files >> ingestion
+                manifest_result >> parquet_files >> ingestion
 
 
             k_group = process_k_group(
@@ -589,12 +638,12 @@ def druid_ingestion_workflow():
     # 8. MAIN FLOW NODES
     # ========================================================
 
-    start = EmptyOperator(
-        task_id="start"
+    start_daily_dag = EmptyOperator(
+        task_id="start_daily_dag"
     )
 
-    end = EmptyOperator(
-        task_id="end",
+    end_daily_dag = EmptyOperator(
+        task_id="end_daily_dag",
         trigger_rule="none_failed_min_one_success",
     )
 
@@ -631,7 +680,7 @@ def druid_ingestion_workflow():
     # 9. START
     # ========================================================
 
-    start >> check_day_type
+    start_daily_dag >> check_day_type
 
 
     # ========================================================
@@ -640,7 +689,7 @@ def druid_ingestion_workflow():
 
     check_day_type >> is_weekend
 
-    is_weekend >> pass_task >> end
+    is_weekend >> pass_task >> end_daily_dag
 
 
     # ========================================================
@@ -667,7 +716,7 @@ def druid_ingestion_workflow():
 
     check_monday_type >> is_regular_weekday
 
-    is_regular_weekday >> regular_day >> end
+    is_regular_weekday >> regular_day >> end_daily_dag
 
 
     # ========================================================
@@ -713,9 +762,9 @@ def druid_ingestion_workflow():
         monday_for_mon,
     ]
 
-    monday_for_sat >> end
-    monday_for_sun >> end
-    monday_for_mon >> end
+    monday_for_sat >> end_daily_dag
+    monday_for_sun >> end_daily_dag
+    monday_for_mon >> end_daily_dag
 
 
 # ============================================================
