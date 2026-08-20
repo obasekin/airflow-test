@@ -177,7 +177,7 @@ def druid_ingestion_workflow():
         k_suffix: str,
     ) -> PokeReturnValue:
 
-        from scripts.TUR.manifest_checker import (
+        from scripts.TUR.TUR_druid_ingestion.manifest_checker import (
             find_manifest
         )
 
