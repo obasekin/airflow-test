@@ -14,7 +14,7 @@ default_args = {
     "retry_delay": timedelta(minutes=5),  # Hata sonrası yeniden denemeden önce bekleme süresi
     "email_on_failure": True,             # Fail durumunda mail at!
     "email_on_retry": False,              # Sadece fail'da atsın, her retry'da spam yapmasın isterseniz
-    "email": ["data@arcanor.com"] # Uyarıların gideceği mail adresi
+    "email": ["obasekin@arcanor.com"] # Uyarıların gideceği mail adresi
 }
 
 @dag(
