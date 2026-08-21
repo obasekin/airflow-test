@@ -51,7 +51,7 @@ default_args = {
         18,
         tz=local_tz,
     ),
-    schedule="0 12 * * *",
+    schedule="0 8 * * *",
     catchup=False,
     tags=[
         "druid",
@@ -241,8 +241,8 @@ def druid_ingestion_workflow():
     # ========================================================
 
     @task(
-        execution_timeout=timedelta(hours=1),
-        retries=3,
+        execution_timeout=timedelta(hours=0.3),
+        retries=2,
     )
     def get_parquet_files(
         manifest_info: dict,
