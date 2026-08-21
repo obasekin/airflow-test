@@ -6,7 +6,7 @@ from airflow.operators.python import PythonOperator
 
 def test_kubernetes():
     import socket
-
+    raise ("error")
     print("Hello from KubernetesExecutor")
     print("Hostname:", socket.gethostname())
 
