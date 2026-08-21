@@ -34,7 +34,7 @@ default_args = {
     "retry_delay": timedelta(minutes=5),
     "email_on_failure": True,
     "email_on_retry": False,
-    "email": ["data@arcanor.com"],
+    "email": ["obasekin@arcanor.com"],
 }
 
 
