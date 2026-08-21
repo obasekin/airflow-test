@@ -6,7 +6,7 @@ import gcsfs
 K_MANIFEST_PREFIX = {
     "k1": "eskimi",
     "k2": "location",
-    "k3": "iris",
+    "k3": "irys",
     "k4": "veraset",
 }
 
@@ -70,7 +70,7 @@ def find_manifest(folder_name: str, k_suffix: str) -> Optional[Dict[str, str]]:
         #
         # geliyor.
         #
-        # K3 = iris olsa bile bunları kabul ediyoruz.
+        # K3 = irys olsa bile bunları kabul ediyoruz.
         #
         if k_suffix == "k3":
             temporary_prefixes = {"1_part", "0_part"}
