@@ -601,21 +601,48 @@ def druid_ingestion_workflow():
             folder_task >> k_group
 
 
-    @task
+    @task.sensor(
+        poke_interval=60 * 5,
+        timeout=6 * 60 * 60,
+        mode="reschedule",
+        execution_timeout=timedelta(hours=6),
+        retries=3,
+        retry_delay=timedelta(minutes=5),
+    )
     def build_ingestion_request(
         folder_name: str,
         **kwargs,
-    ) -> dict:
-        return {
+    ) -> PokeReturnValue:
+        country = "NLD"
+        checker = __import__(
+            f"scripts.{country}.{country}_druid_ingestion.manifest_checker",
+            fromlist=["find_manifest"],
+        )
+        hook = GCSHook(gcp_conn_id="google_cloud_default")
+        files = []
+        for k_suffix in ("k1", "k2", "k3", "k4"):
+            manifest = checker.find_manifest(
+                folder_name=folder_name,
+                k_suffix=k_suffix,
+            )
+            if manifest is None:
+                return PokeReturnValue(is_done=False)
+            bucket_name, folder_prefix = folder_name.replace("gs://", "", 1).split("/", 1)
+            objects = hook.list(
+                bucket_name=bucket_name,
+                prefix=folder_prefix.rstrip("/") + "/",
+            )
+            files.extend(
+                f"gs://{bucket_name}/{object_name}"
+                for object_name in objects
+                if object_name.rstrip("/").split("/")[-1].startswith(manifest["file_name"])
+                and object_name.endswith(".parquet")
+            )
+        return PokeReturnValue(is_done=True, xcom_value={
             "country": "NLD",
             "source_dag_id": kwargs["dag"].dag_id,
-            "folders": {
-                "k1": folder_name,
-                "k2": folder_name,
-                "k3": folder_name,
-                "k4": folder_name,
-            },
-        }
+            "files": sorted(set(files)),
+        })
 
 
     @task_group
