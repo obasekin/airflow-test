@@ -1,0 +1,146 @@
+{
+  "type": "index_parallel",
+  "spec": {
+    "ioConfig": {
+      "type": "index_parallel",
+      "inputSource": {
+        "type": "google",
+        "uris": [
+          "gs://arcanor-orion/output/mobility/NLD/2026/08/15/eskimi_nld_batch_65_15.parquet",
+          "gs://arcanor-orion/output/mobility/NLD/2026/08/15/eskimi_nld_batch_66_15.parquet",
+          "gs://arcanor-orion/output/mobility/NLD/2026/08/15/eskimi_nld_batch_67_15.parquet"
+        ]
+      },
+      "inputFormat": {
+        "type": "parquet",
+        "binaryAsString": true
+      },
+      "appendToExisting": true
+    },
+    "tuningConfig": {
+      "type": "index_parallel",
+      "partitionsSpec": {
+        "type": "dynamic"
+      },
+      "maxNumConcurrentSubTasks": 15
+    },
+    "dataSchema": {
+      "dataSource": "NLDtest",
+      "timestampSpec": {
+        "column": "timestamp_local",
+        "format": "posix"
+      },
+      "transformSpec": {
+        "transforms": [
+          {
+            "type": "expression",
+            "name": "profile",
+            "expression": "string_to_array(profile,',')"
+          }
+        ]
+      },
+      "granularitySpec": {
+        "queryGranularity": "hour",
+        "rollup": false,
+        "segmentGranularity": "day"
+      },
+      "dimensionsSpec": {
+        "dimensions": [
+          "gender",
+          "city",
+          {
+            "type": "long",
+            "name": "year"
+          },
+          {
+            "name": "wz_city_rank",
+            "type": "long"
+          },
+          {
+            "type": "double",
+            "name": "latitude"
+          },
+          "wz_district",
+          "language",
+          "poi_name",
+          {
+            "type": "long",
+            "name": "hour"
+          },
+          "ipv4",
+          "ipv6",
+          "geohash",
+          "hz_city",
+          "wz_city",
+          {
+            "type": "long",
+            "name": "id_type"
+          },
+          "model",
+          {
+            "name": "wz_district_rank",
+            "type": "long"
+          },
+          {
+            "name": "hz_neighborhood_rank",
+            "type": "long"
+          },
+          "maid",
+          "make",
+          {
+            "type": "long",
+            "name": "day"
+          },
+          "hz_district",
+          {
+            "type": "double",
+            "name": "longitude"
+          },
+          {
+            "type": "long",
+            "name": "timestamp"
+          },
+          {
+            "type": "long",
+            "name": "day_of_week"
+          },
+          "app",
+          "connection_type",
+          "profile",
+          {
+            "name": "wz_neighborhood_rank",
+            "type": "long"
+          },
+          "lin_name",
+          "poi_fclass",
+          {
+            "name": "hz_city_rank",
+            "type": "long"
+          },
+          {
+            "type": "long",
+            "name": "minute"
+          },
+          "wz_neighborhood",
+          "hz_neighborhood",
+          "carrier",
+          "lin_fclass",
+          {
+            "type": "long",
+            "name": "month"
+          },
+          "district",
+          "neighborhood",
+          {
+            "name": "age",
+            "type": "long"
+          },
+          {
+            "name": "hz_district_rank",
+            "type": "long"
+          }
+        ]
+      }
+    }
+  }
+}
