@@ -638,6 +638,8 @@ def druid_ingestion_workflow():
                 if object_name.rstrip("/").split("/")[-1].startswith(manifest["file_name"])
                 and object_name.endswith(".parquet")
             )
+        if not files:
+            return PokeReturnValue(is_done=False)
         return PokeReturnValue(is_done=True, xcom_value={
             "country": "NLD",
             "source_dag_id": kwargs["dag"].dag_id,
