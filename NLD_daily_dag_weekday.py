@@ -601,32 +601,30 @@ def druid_ingestion_workflow():
             folder_task >> k_group
 
 
-    @task.sensor(
-        poke_interval=60 * 5,
-        timeout=6 * 60 * 60,
-        mode="reschedule",
-        execution_timeout=timedelta(hours=6),
-        retries=3,
-        retry_delay=timedelta(minutes=5),
-    )
+    @task
     def build_ingestion_request(
         folder_name: str,
+        manifest_infos: list,
+        parquet_files: list,
         **kwargs,
-    ) -> PokeReturnValue:
-        country = "NLD"
-        checker = __import__(
-            f"scripts.{country}.{country}_druid_ingestion.manifest_checker",
-            fromlist=["find_manifest"],
-        )
+    ) -> dict:
+        if not parquet_files:
+            raise FileNotFoundError(
+                f"No parquet files found in {folder_name}"
+            )
+        return {
+            "country": "NLD",
+            "source_dag_id": kwargs["dag"].dag_id,
+            "files": sorted(set(parquet_files)),
+        }
+
+
+    @task
+    def collect_parquet_files(manifest_infos: list) -> list:
         hook = GCSHook(gcp_conn_id="google_cloud_default")
         files = []
-        for k_suffix in ("k1", "k2", "k3", "k4"):
-            manifest = checker.find_manifest(
-                folder_name=folder_name,
-                k_suffix=k_suffix,
-            )
-            if manifest is None:
-                return PokeReturnValue(is_done=False)
+        for manifest in manifest_infos:
+            folder_name = manifest["folder_name"]
             bucket_name, folder_prefix = folder_name.replace("gs://", "", 1).split("/", 1)
             objects = hook.list(
                 bucket_name=bucket_name,
@@ -639,12 +637,8 @@ def druid_ingestion_workflow():
                 and object_name.endswith(".parquet")
             )
         if not files:
-            return PokeReturnValue(is_done=False)
-        return PokeReturnValue(is_done=True, xcom_value={
-            "country": "NLD",
-            "source_dag_id": kwargs["dag"].dag_id,
-            "files": sorted(set(files)),
-        })
+            raise FileNotFoundError("No parquet files found for ingestion request")
+        return sorted(set(files))
 
 
     @task_group
@@ -654,7 +648,21 @@ def druid_ingestion_workflow():
         folder_task = get_todays_expected_folder(
             target_date_str=calculate_folder_date(offset_days=offset_days),
         )
-        request = build_ingestion_request(folder_name=folder_task)
+        manifest_infos = [
+            check_manifest_ready.override(
+                task_id=f"is_manifest_ready_{k_suffix}"
+            )(
+                folder_name=folder_task,
+                k_suffix=k_suffix,
+            )
+            for k_suffix in ("k1", "k2", "k3", "k4")
+        ]
+        parquet_files = collect_parquet_files(manifest_infos=manifest_infos)
+        request = build_ingestion_request(
+            folder_name=folder_task,
+            manifest_infos=manifest_infos,
+            parquet_files=parquet_files,
+        )
         trigger = TriggerDagRunOperator(
             task_id="trigger_ingestion_process_dag",
             trigger_dag_id="ingestion_process_dag",
@@ -672,7 +680,7 @@ def druid_ingestion_workflow():
         wait = EmptyOperator(
             task_id="wait_ingestion_process_dag",
         )
-        folder_task >> request >> trigger >> wait
+        folder_task >> manifest_infos >> parquet_files >> request >> trigger >> wait
 
 
     # ========================================================
