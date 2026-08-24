@@ -5,7 +5,6 @@ import pendulum
 from airflow.decorators import dag, task, task_group
 from airflow.hooks.base import BaseHook
 from airflow.sensors.base import PokeReturnValue
-from airflow.sensors.dag_run import DagRunSensor
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
 

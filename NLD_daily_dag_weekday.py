@@ -2,8 +2,9 @@ import pendulum
 
 from airflow.decorators import dag, task, task_group
 from airflow.operators.empty import EmptyOperator
-from airflow.operators.trigger_dagrun import TriggerDagRunOperator
-from airflow.sensors.dag_run import DagRunSensor
+from airflow.providers.standard.operators.trigger_dagrun import (
+    TriggerDagRunOperator,
+)
 from airflow.sensors.base import PokeReturnValue
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
@@ -633,21 +634,14 @@ def druid_ingestion_workflow():
                 f"{request.operator.task_id}"
             ),
             conf=request,
-            wait_for_completion=False,
-            reset_dag_run=False,
-        )
-        wait = DagRunSensor(
-            task_id="wait_ingestion_process_dag",
-            dag_id="ingestion_process_dag",
-            run_id=(
-                "{{ dag.dag_id }}__{{ run_id }}__"
-                f"{trigger.task_id}"
-            ),
+            wait_for_completion=True,
+            deferrable=True,
             allowed_states=["success"],
             failed_states=["failed"],
-            mode="reschedule",
-            poke_interval=60,
-            timeout=timedelta(hours=12),
+            reset_dag_run=False,
+        )
+        wait = EmptyOperator(
+            task_id="wait_ingestion_process_dag",
         )
         folder_task >> request >> trigger >> wait
 
