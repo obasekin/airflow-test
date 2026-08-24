@@ -2,6 +2,8 @@ import pendulum
 
 from airflow.decorators import dag, task, task_group
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.trigger_dagrun import TriggerDagRunOperator
+from airflow.sensors.dag_run import DagRunSensor
 from airflow.sensors.base import PokeReturnValue
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
@@ -492,7 +494,7 @@ def druid_ingestion_workflow():
     # ========================================================
 
     @task_group
-    def daily_ingestion_process(
+    def legacy_daily_ingestion_process(
         offset_days: int,
     ):
 
@@ -596,6 +598,58 @@ def druid_ingestion_workflow():
             )
 
             folder_task >> k_group
+
+
+    @task
+    def build_ingestion_request(
+        folder_name: str,
+        **kwargs,
+    ) -> dict:
+        return {
+            "country": "NLD",
+            "source_dag_id": kwargs["dag"].dag_id,
+            "folders": {
+                "k1": folder_name,
+                "k2": folder_name,
+                "k3": folder_name,
+                "k4": folder_name,
+            },
+        }
+
+
+    @task_group
+    def daily_ingestion_process(
+        offset_days: int,
+    ):
+        folder_task = get_todays_expected_folder(
+            target_date_str=calculate_folder_date(offset_days=offset_days),
+        )
+        request = build_ingestion_request(folder_name=folder_task)
+        trigger = TriggerDagRunOperator(
+            task_id="trigger_ingestion_process_dag",
+            trigger_dag_id="ingestion_process_dag",
+            trigger_run_id=(
+                "{{ dag.dag_id }}__{{ run_id }}__"
+                f"{request.operator.task_id}"
+            ),
+            conf=request,
+            wait_for_completion=False,
+            reset_dag_run=False,
+        )
+        wait = DagRunSensor(
+            task_id="wait_ingestion_process_dag",
+            dag_id="ingestion_process_dag",
+            run_id=(
+                "{{ dag.dag_id }}__{{ run_id }}__"
+                f"{trigger.task_id}"
+            ),
+            allowed_states=["success"],
+            failed_states=["failed"],
+            mode="reschedule",
+            poke_interval=60,
+            timeout=timedelta(hours=12),
+        )
+        folder_task >> request >> trigger >> wait
 
 
     # ========================================================
