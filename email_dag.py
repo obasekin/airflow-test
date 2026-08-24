@@ -75,7 +75,9 @@ def _try_send(conn, verify_ssl: bool, label: str):
             print("disable_tls=True -> STARTTLS atlaniyor")
 
         # Auth
-        if auth_type == "oauth2" and access_token:
+        if label.startswith("no-auth"):
+            print("AUTH ATLANIYOR (relay IP-whitelist ile calisiyor olabilir)")
+        elif auth_type == "oauth2" and access_token:
             print("XOAUTH2 ile authenticate ediliyor...")
             auth_string = f"user={login}\x01auth=Bearer {access_token}\x01\x01"
             code, resp = server.docmd(
@@ -127,12 +129,22 @@ def test_smtp_default_connection_v2():
         # 2) Cozum adayi: dogrulamasiz context
         print("\n>>> Verified SSL basarisiz oldu, unverified context ile deneniyor...")
         ok2 = _try_send(conn, verify_ssl=False, label="unverified-ssl (olasi cozum)")
-        if ok2:
-            print("\nSONUC: Sertifika dogrulamasi kapatilinca calisiyor -> "
-                  "connection Extra'sina {'ssl_context': 'none'} eklenmeli.")
+
+        if not ok2:
+            # 3) Auth'u tamamen atlayarak dene (relay IP-whitelist olabilir)
+            print("\n>>> XOAUTH2 basarisiz oldu, auth'suz deneniyor (IP-whitelist ihtimali)...")
+            ok3 = _try_send(conn, verify_ssl=False, label="no-auth-unverified-ssl")
+            if ok3:
+                print("\nSONUC: Auth'a hic gerek yok, relay IP-whitelist ile calisiyor -> "
+                      "connection'da auth_type/access_token'i kaldirip sadece "
+                      "{'ssl_context': 'none'} birakmak yeterli.")
+            else:
+                print("\nSONUC: Auth'suz da calismadi -> XOAUTH2 disinda dogru bir auth "
+                      "mekanizmasi (AUTH LOGIN/PLAIN) gerekiyor olabilir, IT/Proofpoint "
+                      "ekibine dogru auth yontemini sormak gerekiyor.")
         else:
-            print("\nSONUC: Unverified context ile de calismadi -> "
-                  "sorun sertifikadan farkli bir sey olabilir (auth, network, vs).")
+            print("\nSONUC: Sertifika dogrulamasi kapatilinca ve XOAUTH2 ile calisiyor -> "
+                  "connection Extra'sina {'ssl_context': 'none'} eklemek yeterli.")
     else:
         print("\nSONUC: Verified SSL ile calisti -> sertifika sorunu yok, "
               "baska bir seyle karisiyor olabilirsiniz.")
