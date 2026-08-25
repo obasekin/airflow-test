@@ -23,7 +23,7 @@ def test_kubernetes():
 
 
 with DAG(
-    dag_id="test_kubernetes_executor",
+    dag_id="test_kubernetes_executor2",
     start_date=datetime(2026, 1, 1),
     schedule=None,
     catchup=False,
