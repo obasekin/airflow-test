@@ -9,7 +9,6 @@ from airflow.sensors.external_task import ExternalTaskSensor
 from airflow.sensors.base import PokeReturnValue
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
-from datetime import timedelta as _minute_shift
 from datetime import timedelta
 import json
 

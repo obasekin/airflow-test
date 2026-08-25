@@ -5,6 +5,7 @@ from airflow.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.trigger_dagrun import (
     TriggerDagRunOperator,
 )
+from airflow.sensors.external_task import ExternalTaskSensor
 from airflow.sensors.base import PokeReturnValue
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
@@ -663,23 +664,45 @@ def druid_ingestion_workflow():
             manifest_infos=manifest_infos,
             parquet_files=parquet_files,
         )
+        trigger_run_id = (
+            "{{ dag.dag_id }}__{{ run_id }}__"
+            f"{request.operator.task_id}"
+        )
+
+        # Her offset_days grubu için benzersiz, deterministik logical_date.
+        # Trigger ve sensor AYNI hesaplamayı yapmalı.
+        triggered_logical_date_expr = (
+            "{{ logical_date + macros.timedelta(minutes="
+            f"{offset_days}"
+            ") }}"
+        )
+
         trigger = TriggerDagRunOperator(
             task_id="trigger_ingestion_process_dag",
             trigger_dag_id="ingestion_process_dag",
-            trigger_run_id=(
-                "{{ dag.dag_id }}__{{ run_id }}__"
-                f"{request.operator.task_id}"
-            ),
+            trigger_run_id=trigger_run_id,
+            logical_date=triggered_logical_date_expr,
             conf=request,
-            wait_for_completion=True,
-            deferrable=True,
+            wait_for_completion=False,
+            reset_dag_run=False,
+            skip_when_already_exists=True,
+        )
+
+        wait = ExternalTaskSensor(
+            task_id="wait_ingestion_process_dag",
+            external_dag_id="ingestion_process_dag",
+            external_task_id=None,
+            execution_date_fn=lambda logical_date, _offset=offset_days: (
+                logical_date + timedelta(minutes=_offset)
+            ),
             allowed_states=["success"],
             failed_states=["failed"],
-            reset_dag_run=False,
+            mode="reschedule",
+            poke_interval=60,
+            timeout=60 * 60 * 24,
+            trigger_rule="none_failed_min_one_success",
         )
-        wait = EmptyOperator(
-            task_id="wait_ingestion_process_dag",
-        )
+
         folder_task >> manifest_infos >> parquet_files >> request >> trigger >> wait
 
 
