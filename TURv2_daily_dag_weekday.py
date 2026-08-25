@@ -5,6 +5,10 @@ from airflow.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.trigger_dagrun import (
     TriggerDagRunOperator,
 )
+from airflow.models import DagRun
+from airflow.exceptions import AirflowFailException
+from airflow.utils.session import provide_session
+from airflow.sensors.base import BaseSensorOperator
 from airflow.sensors.base import PokeReturnValue
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
@@ -39,6 +43,77 @@ default_args = {
     "email_on_retry": False,
     "email": ["obasekin@arcanor.com"],
 }
+
+
+# ============================================================
+# TRIGGERED DAG RUN STATE SENSOR
+# ============================================================
+
+class TriggeredDagRunStateSensor(BaseSensorOperator):
+    """
+    TriggerDagRunOperator ile tetiklenen dag run'ın
+    state'ini run_id üzerinden kontrol eder.
+
+    running -> beklemeye devam (poke)
+    success -> sensor success
+    failed  -> sensor failed
+
+    Triggered dag manuel clear edilip tekrar çalıştırıldığında,
+    bu sensor da clear edilirse aynı run_id'yi tekrar poke eder.
+    """
+
+    template_fields = ("external_dag_id", "external_run_id")
+
+    def __init__(
+        self,
+        external_dag_id: str,
+        external_run_id: str,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.external_dag_id = external_dag_id
+        self.external_run_id = external_run_id
+
+    @provide_session
+    def poke(self, context, session=None):
+
+        dag_run = (
+            session.query(DagRun)
+            .filter(
+                DagRun.dag_id == self.external_dag_id,
+                DagRun.run_id == self.external_run_id,
+            )
+            .first()
+        )
+
+        if dag_run is None:
+            self.log.info(
+                "DagRun not found yet: dag_id=%s run_id=%s. Waiting.",
+                self.external_dag_id,
+                self.external_run_id,
+            )
+            return False
+
+        state = dag_run.state
+
+        self.log.info(
+            "Triggered dag run state: dag_id=%s run_id=%s state=%s",
+            self.external_dag_id,
+            self.external_run_id,
+            state,
+        )
+
+        if state == "success":
+            return True
+
+        if state == "failed":
+            raise AirflowFailException(
+                f"Triggered dag run failed: "
+                f"dag_id={self.external_dag_id} "
+                f"run_id={self.external_run_id}"
+            )
+
+        return False
 
 
 # ============================================================
@@ -663,25 +738,30 @@ def druid_ingestion_workflow():
             manifest_infos=manifest_infos,
             parquet_files=parquet_files,
         )
+        trigger_run_id = (
+            "{{ dag.dag_id }}__{{ run_id }}__"
+            f"{request.operator.task_id}"
+        )
+
         trigger = TriggerDagRunOperator(
             task_id="trigger_ingestion_process_dag",
             trigger_dag_id="ingestion_process_dag",
-            trigger_run_id=(
-                "{{ dag.dag_id }}__{{ run_id }}__"
-                f"{request.operator.task_id}"
-            ),
+            trigger_run_id=trigger_run_id,
             conf=request,
-            wait_for_completion=True,
-            deferrable=True,
-            allowed_states=["success"],
-            failed_states=["failed"],
+            wait_for_completion=False,
             reset_dag_run=False,
         )
-        wait = EmptyOperator(
-            task_id="wait_ingestion_process_dag",
-        )
-        folder_task >> manifest_infos >> parquet_files >> request >> trigger >> wait
 
+        wait = TriggeredDagRunStateSensor(
+            task_id="wait_ingestion_process_dag",
+            external_dag_id="ingestion_process_dag",
+            external_run_id=trigger_run_id,
+            mode="reschedule",
+            poke_interval=60,
+            timeout=60 * 60 * 24,
+        )
+
+        folder_task >> manifest_infos >> parquet_files >> request >> trigger >> wait
 
     # ========================================================
     # 7. BRANCHING
