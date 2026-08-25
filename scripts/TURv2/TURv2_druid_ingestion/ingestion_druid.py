@@ -709,10 +709,7 @@ def monitor_task(
                     status="FAILED",
                     retry_count=retry_count,
                 )
-                raise RuntimeError(
-                    f"Task {task_id} failed and "
-                    f"maximum retry count reached."
-                )
+
                 return "FAILED"
 
             # ------------------------------------------------
@@ -998,10 +995,7 @@ def run_ingestion(
                 logger.error(
                     "Maximum retry count reached."
                 )
-                raise RuntimeError(
-                    f"Task {task_id} failed and "
-                    f"maximum retry count reached."
-                ) 
+
                 return {
                     "status": "FAILED",
                     "reason": "MAX_RETRIES",

@@ -25,8 +25,8 @@ def ingestion_process_workflow():
         country = conf.get("country")
         files = conf.get("files")
 
-        if country not in ("BEL", "NLD"):
-            raise ValueError("country must be BEL or NLD")
+        if country not in ("BEL", "NLD", "TURv2"):
+            raise ValueError("country must be BEL, NLD or TURv2")
         if not isinstance(files, list) or not files:
             raise ValueError("files must contain at least one parquet URI")
 
