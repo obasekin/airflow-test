@@ -24,7 +24,7 @@ local_tz = pendulum.timezone("Europe/Istanbul")
 
 GCS_BUCKET_NAME = "arcanor-orion"
 
-GCS_BASE_PATH = "output/mobility/TURv2"
+GCS_BASE_PATH = "output/mobility/TUR"
 
 
 # ============================================================
