@@ -11,6 +11,11 @@ from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
 from datetime import timedelta
 import json
+from pathlib import Path
+
+from citadel.utilities.manifest import find_manifest
+from citadel.notifications.email import EmailNotifier
+from citadel.ingestion.druid import run_ingestion
 
 # ============================================================
 # TURKEY TIME
@@ -20,13 +25,31 @@ local_tz = pendulum.timezone("Europe/Istanbul")
 
 
 # ============================================================
-# GCS
+# GCS will move to config side
 # ============================================================
 
 GCS_BUCKET_NAME = "arcanor-orion"
 
 GCS_BASE_PATH = "output/mobility/TUR"
 
+MANIFEST_PREFIXES = {
+    "k1": "eskimi",
+    "k2": "location",
+    "k3": "irys",
+    "k4": "veraset",
+}
+
+failure_email = EmailNotifier(
+    to_email="obasekin@arcanor.com",
+)
+
+INGESTION_SPEC = (
+    Path(__file__).resolve().parent
+    / "scripts"
+    / "TURv2"
+    / "TURv2_druid_ingestion"
+    / "ingestion_spec.json"
+)
 
 # ============================================================
 # DEFAULT ARGS
@@ -36,9 +59,7 @@ default_args = {
     "owner": "obasekin",
     "retries": 3,
     "retry_delay": timedelta(minutes=5),
-    "email_on_failure": True,
-    "email_on_retry": False,
-    "email": ["obasekin@arcanor.com"],
+    "on_failure_callback": failure_email,
 }
 
 
@@ -175,9 +196,6 @@ def druid_ingestion_workflow():
         k_suffix: str,
     ) -> PokeReturnValue:
 
-        from scripts.TURv2.TURv2_druid_ingestion.manifest_checker import (
-            find_manifest
-        )
 
         print("=" * 80)
         print("CHECK MANIFEST")
@@ -189,6 +207,7 @@ def druid_ingestion_workflow():
         result = find_manifest(
             folder_name=folder_name,
             k_suffix=k_suffix,
+            manifest_prefixes=MANIFEST_PREFIXES,
         )
 
         # ----------------------------------------------------
@@ -384,9 +403,6 @@ def druid_ingestion_workflow():
 
         from airflow.hooks.base import BaseHook
 
-        from scripts.TURv2.TURv2_druid_ingestion.ingestion_druid import (
-            run_ingestion,
-        )
 
         # ========================================================
         # MANIFEST INFORMATION
@@ -472,6 +488,7 @@ def druid_ingestion_workflow():
             druid_url=druid_url,
             username=username,
             password=password,
+            ingestion_spec_path=str(INGESTION_SPEC),
         )
 
         print("=" * 80)
