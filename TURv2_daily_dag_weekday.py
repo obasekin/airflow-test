@@ -5,10 +5,7 @@ from airflow.operators.empty import EmptyOperator
 from airflow.providers.standard.operators.trigger_dagrun import (
     TriggerDagRunOperator,
 )
-from airflow.models import DagRun
-from airflow.exceptions import AirflowFailException
-from airflow.utils.session import provide_session
-from airflow.sensors.base import BaseSensorOperator
+from airflow.sensors.external_task import ExternalTaskSensor
 from airflow.sensors.base import PokeReturnValue
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
@@ -43,77 +40,6 @@ default_args = {
     "email_on_retry": False,
     "email": ["obasekin@arcanor.com"],
 }
-
-
-# ============================================================
-# TRIGGERED DAG RUN STATE SENSOR
-# ============================================================
-
-class TriggeredDagRunStateSensor(BaseSensorOperator):
-    """
-    TriggerDagRunOperator ile tetiklenen dag run'ın
-    state'ini run_id üzerinden kontrol eder.
-
-    running -> beklemeye devam (poke)
-    success -> sensor success
-    failed  -> sensor failed
-
-    Triggered dag manuel clear edilip tekrar çalıştırıldığında,
-    bu sensor da clear edilirse aynı run_id'yi tekrar poke eder.
-    """
-
-    template_fields = ("external_dag_id", "external_run_id")
-
-    def __init__(
-        self,
-        external_dag_id: str,
-        external_run_id: str,
-        **kwargs,
-    ):
-        super().__init__(**kwargs)
-        self.external_dag_id = external_dag_id
-        self.external_run_id = external_run_id
-
-    @provide_session
-    def poke(self, context, session=None):
-
-        dag_run = (
-            session.query(DagRun)
-            .filter(
-                DagRun.dag_id == self.external_dag_id,
-                DagRun.run_id == self.external_run_id,
-            )
-            .first()
-        )
-
-        if dag_run is None:
-            self.log.info(
-                "DagRun not found yet: dag_id=%s run_id=%s. Waiting.",
-                self.external_dag_id,
-                self.external_run_id,
-            )
-            return False
-
-        state = dag_run.state
-
-        self.log.info(
-            "Triggered dag run state: dag_id=%s run_id=%s state=%s",
-            self.external_dag_id,
-            self.external_run_id,
-            state,
-        )
-
-        if state == "success":
-            return True
-
-        if state == "failed":
-            raise AirflowFailException(
-                f"Triggered dag run failed: "
-                f"dag_id={self.external_dag_id} "
-                f"run_id={self.external_run_id}"
-            )
-
-        return False
 
 
 # ============================================================
@@ -748,17 +674,22 @@ def druid_ingestion_workflow():
             trigger_dag_id="ingestion_process_dag",
             trigger_run_id=trigger_run_id,
             conf=request,
-            wait_for_completion=False,
+            wait_for_completion=False,       # asla beklemesin, sadece tetiklesin
             reset_dag_run=False,
+            skip_when_already_exists=True,   # run zaten varsa fail değil, skip olsun
         )
 
-        wait = TriggeredDagRunStateSensor(
+        wait = ExternalTaskSensor(
             task_id="wait_ingestion_process_dag",
             external_dag_id="ingestion_process_dag",
+            external_task_id=None,           # tüm dag'ın state'i
             external_run_id=trigger_run_id,
+            allowed_states=["success"],
+            failed_states=["failed"],
             mode="reschedule",
             poke_interval=60,
             timeout=60 * 60 * 24,
+            trigger_rule="none_failed_min_one_success",  # trigger skip olsa bile wait çalışsın
         )
 
         folder_task >> manifest_infos >> parquet_files >> request >> trigger >> wait
