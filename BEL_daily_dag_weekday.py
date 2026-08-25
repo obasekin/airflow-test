@@ -43,8 +43,8 @@ failure_email = EmailNotifier(
 INGESTION_SPEC = (
     Path(__file__).resolve().parent
     / "scripts"
-    / "TURv2"
-    / "TURv2_druid_ingestion"
+    / "BEL"
+    / "BEL_druid_ingestion"
     / "ingestion_spec.json"
 )
 
@@ -536,12 +536,7 @@ def druid_ingestion_workflow():
         # K1 / K2 / K3 / K4
         # ----------------------------------------------------
 
-        for k in [
-            "k1",
-            "k2",
-            "k3",
-            "k4",
-        ]:
+        for k in MANIFEST_PREFIXES:
 
             @task_group(
                 group_id=f"group_{k}",
@@ -669,8 +664,9 @@ def druid_ingestion_workflow():
             )(
                 folder_name=folder_task,
                 k_suffix=k_suffix,
+                manifest_prefix=manifest_prefix,
             )
-            for k_suffix in ("k1", "k2", "k3", "k4")
+            for k_suffix, manifest_prefix in MANIFEST_PREFIXES.items()
         ]
         parquet_files = collect_parquet_files(manifest_infos=manifest_infos)
         request = build_ingestion_request(
