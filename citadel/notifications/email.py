@@ -21,10 +21,10 @@ class EmailNotifier(BaseNotifier):
     def __init__(
         self,
         *,
-        conn_id: str = "smtp_default",
         to_email: str | list[str] | None = None,
         subject: str | None = None,
         html_content: str | None = None,
+        conn_id: str = "smtp_default",
     ):
         super().__init__()
 
@@ -69,7 +69,7 @@ class EmailNotifier(BaseNotifier):
         )
 
         # ============================================================
-        # SMTP CONNECTION
+        # AIRFLOW SMTP CONNECTION
         # ============================================================
 
         conn = BaseHook.get_connection(
@@ -84,29 +84,64 @@ class EmailNotifier(BaseNotifier):
                 "has no host."
             )
 
+        smtp_port = conn.port
         smtp_user = conn.login
         smtp_password = conn.password
 
-        extra = conn.extra_dejson
+        extra = conn.extra_dejson or {}
+
+        # ============================================================
+        # SMTP SETTINGS
+        # ============================================================
+
+        # disable_ssl=True:
+        #
+        # SMTP SSL certificate verification is disabled.
+        #
+        # IMPORTANT:
+        # This does NOT disable TLS.
+        #
+        # With:
+        #
+        # disable_ssl=True
+        # disable_tls=False
+        #
+        # the connection is:
+        #
+        # SMTP -> EHLO -> STARTTLS -> TLS -> AUTH -> SEND
+        #
 
         disable_ssl = extra.get(
             "disable_ssl",
             True,
         )
 
+        # disable_tls=True:
+        #
+        # STARTTLS is completely disabled.
+        #
+        # Normally this should remain False for port 587.
+        #
+
         disable_tls = extra.get(
             "disable_tls",
             False,
         )
 
-        smtp_port = conn.port
+        # ------------------------------------------------------------
+        # PORT
+        # ------------------------------------------------------------
 
         if smtp_port is None:
-            smtp_port = (
-                587
-                if disable_ssl
-                else 465
-            )
+
+            if disable_ssl:
+                smtp_port = 587
+            else:
+                smtp_port = 465
+
+        # ------------------------------------------------------------
+        # TIMEOUT
+        # ------------------------------------------------------------
 
         timeout = int(
             extra.get(
@@ -115,6 +150,10 @@ class EmailNotifier(BaseNotifier):
             )
         )
 
+        # ------------------------------------------------------------
+        # RETRY
+        # ------------------------------------------------------------
+
         retry_limit = int(
             extra.get(
                 "retry_limit",
@@ -122,19 +161,29 @@ class EmailNotifier(BaseNotifier):
             )
         )
 
+        # ------------------------------------------------------------
+        # FROM
+        # ------------------------------------------------------------
+
         from_email = (
             extra.get("from_email")
             or smtp_user
         )
 
+        if not from_email:
+            raise ValueError(
+                f"SMTP connection '{self.conn_id}' "
+                "has no login/from_email."
+            )
+
         # ============================================================
-        # RECIPIENTS
+        # RECIPIENT
         # ============================================================
 
         if not self.to_email:
             raise ValueError(
                 "EmailNotifier requires "
-                "at least one recipient."
+                "'to_email'."
             )
 
         if isinstance(
@@ -149,6 +198,12 @@ class EmailNotifier(BaseNotifier):
                 self.to_email
             )
 
+        if not recipients:
+            raise ValueError(
+                "EmailNotifier requires "
+                "at least one recipient."
+            )
+
         # ============================================================
         # SUBJECT
         # ============================================================
@@ -161,18 +216,13 @@ class EmailNotifier(BaseNotifier):
         )
 
         # ============================================================
-        # BODY
+        # HTML
         # ============================================================
 
-        if self.html_content:
-
-            html_content = (
-                self.html_content
-            )
-
-        else:
-
-            html_content = f"""
+        html_content = (
+            self.html_content
+            or
+            f"""
 <html>
 <body>
 
@@ -203,9 +253,10 @@ class EmailNotifier(BaseNotifier):
 </body>
 </html>
 """
+        )
 
         # ============================================================
-        # MESSAGE
+        # MIME MESSAGE
         # ============================================================
 
         msg = MIMEMultipart(
@@ -213,10 +264,13 @@ class EmailNotifier(BaseNotifier):
         )
 
         msg["From"] = from_email
+
         msg["To"] = ", ".join(
             recipients
         )
+
         msg["Subject"] = subject
+
         msg["Date"] = formatdate(
             localtime=True
         )
@@ -230,12 +284,38 @@ class EmailNotifier(BaseNotifier):
         )
 
         # ============================================================
-        # SSL
+        # SSL CONTEXT
         # ============================================================
 
-        ssl_context = (
-            ssl.create_default_context()
-        )
+        if disable_ssl:
+
+            # --------------------------------------------------------
+            # TLS remains ENABLED.
+            #
+            # Only certificate verification is disabled.
+            #
+            # This is required for your Proofpoint endpoint because:
+            #
+            # smtp.domain.com
+            #
+            # receives a certificate for:
+            #
+            # *.smtp.a.cloudfilter.net
+            # --------------------------------------------------------
+
+            ssl_context = (
+                ssl._create_unverified_context()
+            )
+
+        else:
+
+            # --------------------------------------------------------
+            # Normal secure certificate verification.
+            # --------------------------------------------------------
+
+            ssl_context = (
+                ssl.create_default_context()
+            )
 
         # ============================================================
         # SEND
@@ -249,9 +329,9 @@ class EmailNotifier(BaseNotifier):
 
             try:
 
-                # ----------------------------------------------------
-                # SSL / 465
-                # ----------------------------------------------------
+                # ====================================================
+                # PORT 465 / SMTPS
+                # ====================================================
 
                 if not disable_ssl:
 
@@ -268,6 +348,7 @@ class EmailNotifier(BaseNotifier):
                             smtp_user
                             and smtp_password
                         ):
+
                             server.login(
                                 smtp_user,
                                 smtp_password,
@@ -279,9 +360,9 @@ class EmailNotifier(BaseNotifier):
                             msg.as_string(),
                         )
 
-                # ----------------------------------------------------
-                # STARTTLS / 587
-                # ----------------------------------------------------
+                # ====================================================
+                # PORT 587 / STARTTLS
+                # ====================================================
 
                 else:
 
@@ -291,7 +372,15 @@ class EmailNotifier(BaseNotifier):
                         timeout=timeout,
                     ) as server:
 
+                        # --------------------------------------------
+                        # Initial EHLO
+                        # --------------------------------------------
+
                         server.ehlo()
+
+                        # --------------------------------------------
+                        # STARTTLS
+                        # --------------------------------------------
 
                         if not disable_tls:
 
@@ -299,22 +388,39 @@ class EmailNotifier(BaseNotifier):
                                 context=ssl_context
                             )
 
+                            # ----------------------------------------
+                            # EHLO after STARTTLS
+                            # ----------------------------------------
+
                             server.ehlo()
+
+                        # --------------------------------------------
+                        # AUTH
+                        # --------------------------------------------
 
                         if (
                             smtp_user
                             and smtp_password
                         ):
+
                             server.login(
                                 smtp_user,
                                 smtp_password,
                             )
+
+                        # --------------------------------------------
+                        # SEND
+                        # --------------------------------------------
 
                         server.sendmail(
                             from_email,
                             recipients,
                             msg.as_string(),
                         )
+
+                # ====================================================
+                # SUCCESS
+                # ====================================================
 
                 return
 
@@ -326,10 +432,7 @@ class EmailNotifier(BaseNotifier):
 
                 last_exception = exc
 
-                if (
-                    attempt
-                    >= retry_limit
-                ):
+                if attempt >= retry_limit:
                     raise
 
         if last_exception:
