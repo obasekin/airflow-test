@@ -15,7 +15,7 @@ from pathlib import Path
 
 from citadel.utilities.manifest import find_manifest
 from citadel.notifications.email import EmailNotifier
-from citadel.ingestion.druid import run_ingestion
+from citadel.druid.ingestion import run_ingestion
 
 # ============================================================
 # BELGIUM TIME
