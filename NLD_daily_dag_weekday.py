@@ -27,7 +27,7 @@ local_tz = pendulum.timezone("Europe/Istanbul")
 # ============================================================
 # GCS will move to config side
 # ============================================================
-COUNTRY = "BEL"
+COUNTRY = "NLD"
 
 GCS_BUCKET_NAME = "arcanor-orion"
 
