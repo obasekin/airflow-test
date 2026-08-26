@@ -5,11 +5,7 @@
       "type": "index_parallel",
       "inputSource": {
         "type": "google",
-        "uris": [
-          "gs://arcanor-orion/output/mobility/NLD/2026/08/15/eskimi_nld_batch_65_15.parquet",
-          "gs://arcanor-orion/output/mobility/NLD/2026/08/15/eskimi_nld_batch_66_15.parquet",
-          "gs://arcanor-orion/output/mobility/NLD/2026/08/15/eskimi_nld_batch_67_15.parquet"
-        ]
+        "uris": []
       },
       "inputFormat": {
         "type": "parquet",
@@ -25,7 +21,7 @@
       "maxNumConcurrentSubTasks": 15
     },
     "dataSchema": {
-      "dataSource": "NLDtest",
+      "dataSource": "NLD",
       "timestampSpec": {
         "column": "timestamp_local",
         "format": "posix"

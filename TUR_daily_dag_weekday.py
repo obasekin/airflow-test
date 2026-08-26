@@ -46,8 +46,8 @@ failure_email = EmailNotifier(
 INGESTION_SPEC = (
     Path(__file__).resolve().parent
     / "scripts"
-    / "TURv2"
-    / "TURv2_druid_ingestion"
+    / "TUR"
+    / "TUR_druid_ingestion"
     / "ingestion_spec.json"
 )
 
@@ -68,7 +68,7 @@ default_args = {
 # ============================================================
 
 @dag(
-    dag_id="TURv2_daily_dag_weekday",
+    dag_id="TUR_daily_dag_weekday",
     default_args=default_args,
     start_date=pendulum.datetime(
         2026,
@@ -629,7 +629,7 @@ def druid_ingestion_workflow():
             )
 
         return {
-            "country": "TURv2",
+            "country": "TUR",
             "source_dag_id": kwargs["dag"].dag_id,
             "files": sorted(set(parquet_files)),
             "ingestion_spec_path": ingestion_spec_path,

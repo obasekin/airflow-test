@@ -27,10 +27,11 @@ local_tz = pendulum.timezone("Europe/Istanbul")
 # ============================================================
 # GCS will move to config side
 # ============================================================
+COUNTRY = "BEL" 
 
 GCS_BUCKET_NAME = "arcanor-orion"
 
-GCS_BASE_PATH = "output/mobility/BEL"
+GCS_BASE_PATH = f"output/mobility/{COUNTRY}"
 
 MANIFEST_PREFIXES = {
     "k4": "veraset",
@@ -43,8 +44,8 @@ failure_email = EmailNotifier(
 INGESTION_SPEC = (
     Path(__file__).resolve().parent
     / "scripts"
-    / "BEL"
-    / "BEL_druid_ingestion"
+    / COUNTRY
+    / f"{COUNTRY}_druid_ingestion"
     / "ingestion_spec.json"
 )
 
@@ -626,7 +627,7 @@ def druid_ingestion_workflow():
             )
 
         return {
-            "country": "TURv2",
+            "country": COUNTRY,
             "source_dag_id": kwargs["dag"].dag_id,
             "files": sorted(set(parquet_files)),
             "ingestion_spec_path": ingestion_spec_path,
