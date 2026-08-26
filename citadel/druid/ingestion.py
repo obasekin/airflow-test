@@ -585,6 +585,7 @@ def monitor_task(
     druid_url: str,
     username: str,
     password: str,
+    ingestion_spec_path: str,
 ) -> str:
     """
     Bizim oluşturduğumuz Druid task'ı takip eder.
@@ -736,6 +737,7 @@ def monitor_task(
                 druid_url=druid_url,
                 username=username,
                 password=password,
+                ingestion_spec_path=ingestion_spec_path,
             )
 
             write_state(
@@ -959,6 +961,7 @@ def run_ingestion(
                 druid_url=druid_url,
                 username=username,
                 password=password,
+                ingestion_spec_path=ingestion_spec_path,
             )
 
             return {
@@ -1013,6 +1016,7 @@ def run_ingestion(
                 druid_url=druid_url,
                 username=username,
                 password=password,
+                ingestion_spec_path=ingestion_spec_path,
             )
 
             write_state(
@@ -1035,6 +1039,7 @@ def run_ingestion(
                 druid_url=druid_url,
                 username=username,
                 password=password,
+                ingestion_spec_path=ingestion_spec_path,
             )
 
             return {
@@ -1108,6 +1113,7 @@ def run_ingestion(
         druid_url=druid_url,
         username=username,
         password=password,
+        ingestion_spec_path=ingestion_spec_path,
     )
 
     # ========================================================
@@ -1138,6 +1144,7 @@ def run_ingestion(
         druid_url=druid_url,
         username=username,
         password=password,
+        ingestion_spec_path=ingestion_spec_path,
     )
 
     return {

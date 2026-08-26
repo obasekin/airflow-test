@@ -6,6 +6,7 @@ from airflow.decorators import dag, task
 from airflow.hooks.base import BaseHook
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
+from citadel.druid.ingestion import run_ingestion
 
 @dag(
     dag_id="ingestion_process_dag",
@@ -24,30 +25,45 @@ def ingestion_process_workflow():
         conf = kwargs["dag_run"].conf or {}
         country = conf.get("country")
         files = conf.get("files")
+        ingestion_spec_path = conf.get("ingestion_spec_path")
 
         if country not in ("BEL", "NLD", "TURv2"):
-            raise ValueError("country must be BEL, NLD or TURv2")
+            raise ValueError(
+                "country must be BEL, NLD or TURv2"
+            )
+
         if not isinstance(files, list) or not files:
-            raise ValueError("files must contain at least one parquet URI")
+            raise ValueError(
+                "files must contain at least one parquet URI"
+            )
+
+        if not ingestion_spec_path:
+            raise ValueError(
+                "ingestion_spec_path is required"
+            )
 
         return conf
 
     @task(execution_timeout=timedelta(hours=2), retries=3)
-    def execute_idempotent_druid_ingestion(request: dict) -> dict:
-        country = request["country"]
-        ingestion_module = importlib.import_module(
-            f"scripts.{country}.{country}_druid_ingestion.ingestion_druid"
-        )
-        conn = BaseHook.get_connection("druid_default")
-        druid_url = (conn.host or "").rstrip("/")
-        if not druid_url or not conn.login or not conn.password:
-            raise ValueError("druid_default must contain host, login and password")
+    def execute_idempotent_druid_ingestion(
+        request: dict,
+    ) -> dict:
 
-        return ingestion_module.run_ingestion(
+        conn = BaseHook.get_connection("druid_default")
+
+        druid_url = (conn.host or "").rstrip("/")
+
+        if not druid_url or not conn.login or not conn.password:
+            raise ValueError(
+                "druid_default must contain host, login and password"
+            )
+
+        return run_ingestion(
             parquet_files=request["files"],
             druid_url=druid_url,
             username=conn.login,
             password=conn.password,
+            ingestion_spec_path=request["ingestion_spec_path"],
         )
 
     request = read_request()

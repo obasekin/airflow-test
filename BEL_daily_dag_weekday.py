@@ -616,16 +616,20 @@ def druid_ingestion_workflow():
         folder_name: str,
         manifest_infos: list,
         parquet_files: list,
+        ingestion_spec_path: str,
         **kwargs,
     ) -> dict:
+
         if not parquet_files:
             raise FileNotFoundError(
                 f"No parquet files found in {folder_name}"
             )
+
         return {
-            "country": "BEL",
+            "country": "TURv2",
             "source_dag_id": kwargs["dag"].dag_id,
             "files": sorted(set(parquet_files)),
+            "ingestion_spec_path": ingestion_spec_path,
         }
 
 
@@ -673,6 +677,7 @@ def druid_ingestion_workflow():
             folder_name=folder_task,
             manifest_infos=manifest_infos,
             parquet_files=parquet_files,
+            ingestion_spec_path=str(INGESTION_SPEC),
         )
         trigger_run_id = (
             "{{ dag.dag_id }}__{{ run_id }}__"
