@@ -699,7 +699,10 @@ def druid_ingestion_workflow():
         trigger = TriggerDagRunOperator(
             task_id="trigger_ingestion_process_dag",
             trigger_dag_id="ingestion_process_dag",
-            trigger_run_id=trigger_run_id,
+            trigger_run_id=(
+                    "{{ dag.dag_id }}__{{ run_id }}__"
+                    f"{request.operator.task_id}"
+                ),
             logical_date=triggered_logical_date_expr,
             conf=request,
             wait_for_completion=False,
@@ -709,7 +712,10 @@ def druid_ingestion_workflow():
 
         wait = ExternalTaskSensor(
             task_id="wait_ingestion_process_dag",
-            external_dag_id="ingestion_process_dag",
+            external_dag_id=(
+                    "{{ dag.dag_id }}__{{ run_id }}__"
+                    f"{request.operator.task_id}"
+                ),
             external_task_id=None,
             execution_date_fn=lambda logical_date, _offset=offset_days: (
                 logical_date + timedelta(minutes=_offset)
