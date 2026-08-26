@@ -7,16 +7,38 @@ from airflow.hooks.base import BaseHook
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
 from citadel.druid.ingestion import run_ingestion
+from citadel.notifications.email import EmailNotifier
+
+failure_email = EmailNotifier(
+    to_email="obasekin@arcanor.com",
+)
+
+default_args = {
+    "owner": "obasekin",
+    "retries": 3,
+    "retry_delay": timedelta(minutes=5),
+    "on_failure_callback": failure_email,
+}
 
 @dag(
     dag_id="ingestion_process_dag",
+    default_args=default_args,
     schedule=None,
-    start_date=pendulum.datetime(2026, 8, 18, tz="UTC"),
+    start_date=pendulum.datetime(
+        2026,
+        8,
+        18,
+        tz="UTC",
+    ),
     catchup=False,
     max_active_runs=1,
     max_active_tasks=1,
     render_template_as_native_obj=True,
-    tags=["druid", "ingestion", "child-dag"],
+    tags=[
+        "druid",
+        "ingestion",
+        "child-dag",
+    ],
 )
 def ingestion_process_workflow():
 
