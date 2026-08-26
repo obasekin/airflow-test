@@ -693,7 +693,7 @@ def druid_ingestion_workflow():
         COUNTRY_SECONDS_OFFSET = sum(ord(c) for c in COUNTRY) % 55
         triggered_logical_date_expr = (
             "{{ logical_date + macros.timedelta(minutes="
-            f"{COUNTRY_SECONDS_OFFSET}"
+            f"{offset_days}, seconds={COUNTRY_SECONDS_OFFSET}"
             ") }}"
         )
 
