@@ -33,31 +33,6 @@ class EmailNotifier(BaseNotifier):
         self.subject = subject
         self.html_content = html_content
 
-    def send_message(
-        self,
-        *,
-        to_email: str | list[str] | None = None,
-        subject: str | None = None,
-        html_content: str | None = None,
-        context: Context | dict | None = None,
-    ) -> None:
-        if to_email is not None:
-            self.to_email = to_email
-        if subject is not None:
-            self.subject = subject
-        if html_content is not None:
-            self.html_content = html_content
-
-        if context is None:
-            context = {
-                "dag": None,
-                "dag_run": None,
-                "task": None,
-                "exception": None,
-            }
-
-        self.notify(context)
-
     def notify(self, context: Context) -> None:
 
         # ============================================================

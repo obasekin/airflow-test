@@ -14,10 +14,6 @@ import json
 from pathlib import Path
 
 from citadel.utilities.manifest import find_manifest
-from citadel.utilities.io_controller import (
-    run_after_druid_io_check_and_send_mail,
-    run_before_druid_io_check,
-)
 from citadel.notifications.email import EmailNotifier
 from citadel.druid.ingestion import run_ingestion
 
@@ -663,45 +659,12 @@ def druid_ingestion_workflow():
         return sorted(set(files))
 
 
-    @task
-    def run_before_ingestion_io_control(
-        target_date: str,
-        datasource: str = COUNTRY,
-        **kwargs,
-    ) -> dict:
-        return run_before_druid_io_check(
-            datasource=datasource,
-            target_date=target_date,
-        )
-
-    @task
-    def run_after_ingestion_io_control(
-        before_result: dict,
-        target_date: str,
-        datasource: str = COUNTRY,
-        **kwargs,
-    ) -> dict:
-        return run_after_druid_io_check_and_send_mail(
-            datasource=datasource,
-            target_date=target_date,
-            before_result=before_result,
-            to_email=kwargs.get("to_email") or "obasekin@arcanor.com",
-            ingestion_status="SUCCESS",
-        )
-
     @task_group
     def daily_ingestion_process(
         offset_days: int,
     ):
-        target_date = calculate_folder_date(
-            offset_days=offset_days,
-        )
         folder_task = get_todays_expected_folder(
-            target_date_str=target_date,
-        )
-        before_io = run_before_ingestion_io_control(
-            target_date=target_date,
-            datasource=COUNTRY,
+            target_date_str=calculate_folder_date(offset_days=offset_days),
         )
         manifest_infos = [
             check_manifest_ready.override(
@@ -769,17 +732,7 @@ def druid_ingestion_workflow():
             trigger_rule="none_failed_min_one_success",
         )
 
-        folder_task >> before_io
-        before_io >> trigger
         folder_task >> manifest_infos >> parquet_files >> request >> trigger >> wait
-
-        after_io = run_after_ingestion_io_control(
-            before_result=before_io,
-            target_date=target_date,
-            datasource=COUNTRY,
-            to_email=["obasekin@arcanor.com", "ucelik@arcanor.com"],
-        )
-        wait >> after_io
 
 
     # ========================================================
