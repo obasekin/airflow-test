@@ -690,7 +690,10 @@ def druid_ingestion_workflow():
 
         # Her offset_days grubu için benzersiz, deterministik logical_date.
         # Trigger ve sensor AYNI hesaplamayı yapmalı.
-        COUNTRY_SECONDS_OFFSET = sum(ord(c) for c in COUNTRY) % 55
+        COUNTRY_SECONDS_OFFSET = sum(
+            ord(c) for c in COUNTRY
+        ) % 55
+
         triggered_logical_date_expr = (
             "{{ logical_date + macros.timedelta(minutes="
             f"{offset_days}, seconds={COUNTRY_SECONDS_OFFSET}"
@@ -710,9 +713,17 @@ def druid_ingestion_workflow():
 
         wait = ExternalTaskSensor(
             task_id="wait_ingestion_process_dag",
-            external_dag_id=trigger_run_id,
+            external_dag_id="ingestion_process_dag",
             external_task_id=None,
-            execution_date_fn=triggered_logical_date_expr,
+
+            execution_date_fn=lambda logical_date,
+                _offset=offset_days,
+                _seconds=COUNTRY_SECONDS_OFFSET,
+                **kwargs: logical_date + timedelta(
+                    minutes=_offset,
+                    seconds=_seconds,
+                ),
+
             allowed_states=["success"],
             failed_states=["failed"],
             mode="reschedule",
