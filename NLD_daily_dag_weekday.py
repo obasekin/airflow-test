@@ -712,9 +712,7 @@ def druid_ingestion_workflow():
             task_id="wait_ingestion_process_dag",
             external_dag_id=trigger_run_id,
             external_task_id=None,
-            execution_date_fn=lambda logical_date, _offset=offset_days: (
-                logical_date + timedelta(minutes=_offset)
-            ),
+            execution_date_fn=triggered_logical_date_expr,
             allowed_states=["success"],
             failed_states=["failed"],
             mode="reschedule",
