@@ -34,7 +34,7 @@ GCS_BUCKET_NAME = "arcanor-orion"
 GCS_BASE_PATH = f"output/mobility/{COUNTRY}"
 
 MANIFEST_PREFIXES = {
-    "k4": "veraset",
+    "k3": "irys",
 }
 
 failure_email = EmailNotifier(
