@@ -39,11 +39,11 @@ MANIFEST_PREFIXES = {
 }
 
 failure_email = EmailNotifier(
-    to_email=["obasekin@arcanor.com", "ucelik@arcanor.com"],
+    to_email="obasekin@arcanor.com",
 )
 
 INGESTION_SPEC = (
-    Path(__file__).parent.parent.parent
+    Path(__file__).resolve().parent
     / "scripts"
     / COUNTRY
     / f"{COUNTRY}_druid_ingestion"
