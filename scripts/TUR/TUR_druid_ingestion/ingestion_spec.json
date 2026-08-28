@@ -21,7 +21,7 @@
       "maxNumConcurrentSubTasks": 15
     },
     "dataSchema": {
-      "dataSource": "TUR",
+      "dataSource": "TURtest",
       "timestampSpec": {
         "column": "timestamp_local",
         "format": "posix"
