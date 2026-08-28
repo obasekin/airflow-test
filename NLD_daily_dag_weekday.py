@@ -43,7 +43,7 @@ failure_email = EmailNotifier(
 )
 
 INGESTION_SPEC = (
-    Path(__file__).resolve().parent
+    Path(__file__).parent.parent.parent
     / "scripts"
     / COUNTRY
     / f"{COUNTRY}_druid_ingestion"
