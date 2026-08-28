@@ -184,9 +184,10 @@ def druid_ingestion_workflow():
 
     @task.sensor(
         poke_interval=60 * 5,
-        timeout=16 * 60 * 60,
+        timeout=6 * 60 * 60,
         mode="reschedule",
-        execution_timeout=timedelta(hours=16),
+        execution_timeout=timedelta(hours=6),
+        retries=3,
         retry_delay=timedelta(minutes=5),
     )
     def check_manifest_ready(
