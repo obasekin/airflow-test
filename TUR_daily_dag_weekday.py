@@ -42,7 +42,7 @@ MANIFEST_PREFIXES = {
 }
 
 failure_email = EmailNotifier(
-    to_email="obasekin@arcanor.com",
+    to_email=["obasekin@arcanor.com", "ucelik@arcanor.com"],
 )
 
 INGESTION_SPEC = (

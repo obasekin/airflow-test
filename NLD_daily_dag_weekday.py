@@ -39,7 +39,7 @@ MANIFEST_PREFIXES = {
 }
 
 failure_email = EmailNotifier(
-    to_email="obasekin@arcanor.com",
+    to_email=["obasekin@arcanor.com", "ucelik@arcanor.com"],
 )
 
 INGESTION_SPEC = (
@@ -58,9 +58,7 @@ default_args = {
     "owner": "obasekin",
     "retries": 3,
     "retry_delay": timedelta(minutes=5),
-    "email_on_failure": True,
-    "email_on_retry": False,
-    "email": ["obasekin@arcanor.com"],
+    "on_failure_callback": failure_email,
 }
 
 
