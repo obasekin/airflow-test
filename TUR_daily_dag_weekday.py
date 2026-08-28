@@ -47,9 +47,9 @@ failure_email = EmailNotifier(
 
 INGESTION_SPEC = (
     Path(__file__).resolve().parent
-    / "scripts"
-    / "TUR"
-    / "TUR_druid_ingestion"
+#    / "scripts"
+#    / "TUR"
+#    / "TUR_druid_ingestion"
     / "ingestion_spec.json"
 )
 
