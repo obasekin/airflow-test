@@ -1,3 +1,5 @@
+import os
+
 import pendulum
 
 from airflow.decorators import dag, task, task_group
@@ -44,9 +46,11 @@ MANIFEST_PREFIXES = {
 failure_email = EmailNotifier(
     to_email=["obasekin@arcanor.com", "ucelik@arcanor.com"],
 )
-
+AIRFLOW_HOME = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
 INGESTION_SPEC = (
-    Path(__file__).parent.parent.parent
+    Path(AIRFLOW_HOME)
+    / "dags"
+    / "repo"
     / "scripts"
     / "TUR"
     / "TUR_druid_ingestion"
