@@ -1,3 +1,5 @@
+import os
+
 import pendulum
 
 from airflow.decorators import dag, task, task_group
@@ -45,8 +47,14 @@ failure_email = EmailNotifier(
     to_email="obasekin@arcanor.com",
 )
 
+AIRFLOW_HOME = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
+
+# .resolve() ve .parent belasından tamamen kurtulduk!
+# Terminalde kendi gözünüzle gördüğünüz mutlak (absolute) yolu sabitliyoruz:
 INGESTION_SPEC = (
-    Path(__file__).resolve().parent
+    Path(AIRFLOW_HOME)
+    / "dags"
+    / "repo"
     / "scripts"
     / "TUR"
     / "TUR_druid_ingestion"
