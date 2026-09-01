@@ -696,7 +696,11 @@ def monitor_task(
                     retry_count=retry_count,
                 )
 
-                return "FAILED"
+                raise RuntimeError(
+                    f"Druid ingestion task {task_id} FAILED "
+                    f"after reaching max retries "
+                    f"({retry_count}/{MAX_RETRIES})."
+                )
 
             # ------------------------------------------------
             # NEXT RETRY
@@ -986,12 +990,11 @@ def run_ingestion(
                     "Maximum retry count reached."
                 )
 
-                return {
-                    "status": "FAILED",
-                    "reason": "MAX_RETRIES",
-                    "ingestion_key": ingestion_key,
-                    "task_id": task_id,
-                }
+                raise RuntimeError(
+                    f"Druid ingestion task {task_id} previously FAILED "
+                    f"and max retries reached "
+                    f"({retry_count}/{MAX_RETRIES})."
+                )
 
             new_retry_count = (
                 retry_count + 1
