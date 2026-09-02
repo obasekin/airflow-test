@@ -1,6 +1,7 @@
 from typing import Any
 
 import requests
+from requests import HTTPError
 
 from citadel.druid.credentials import get_druid_credentials
 
@@ -25,5 +26,12 @@ def execute_query(
         auth=(username, password),
         timeout=timeout,
     )
-    response.raise_for_status()
+    try:
+        response.raise_for_status()
+    except HTTPError as exc:
+        raise HTTPError(
+            f"{exc} - Druid response: {response.text}",
+            response=response,
+        ) from exc
+
     return response.json()
