@@ -41,7 +41,7 @@ MANIFEST_PREFIXES = {
 }
 
 failure_email = EmailNotifier(
-    to_email="obasekin@arcanor.com",
+    to_email=["obasekin@arcanor.com", "ucelik@arcanor.com"],
 )
 
 AIRFLOW_HOME = os.environ.get("AIRFLOW_HOME", "/opt/airflow")

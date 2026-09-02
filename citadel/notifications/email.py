@@ -3,6 +3,7 @@ from __future__ import annotations
 import smtplib
 import ssl
 
+from collections.abc import Iterable
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formatdate
@@ -21,7 +22,7 @@ class EmailNotifier(BaseNotifier):
     def __init__(
         self,
         *,
-        to_email: str | list[str] | None = None,
+        to_email: str | Iterable[str] | None = None,
         subject: str | None = None,
         html_content: str | None = None,
         conn_id: str = "smtp_default",
@@ -193,10 +194,18 @@ class EmailNotifier(BaseNotifier):
             recipients = [
                 self.to_email
             ]
-        else:
-            recipients = list(
-                self.to_email
+        elif self.to_email is None:
+            raise ValueError(
+                "EmailNotifier requires "
+                "'to_email'."
             )
+        else:
+            recipients = [
+                recipient.strip()
+                for recipient in self.to_email
+                if isinstance(recipient, str)
+                and recipient.strip()
+            ]
 
         if not recipients:
             raise ValueError(

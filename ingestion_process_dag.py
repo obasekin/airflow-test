@@ -10,7 +10,7 @@ from citadel.druid.ingestion import run_ingestion
 from citadel.notifications.email import EmailNotifier
 
 failure_email = EmailNotifier(
-    to_email="obasekin@arcanor.com",
+    to_email=["obasekin@arcanor.com", "ucelik@arcanor.com"],
 )
 
 default_args = {
