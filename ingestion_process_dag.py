@@ -3,7 +3,6 @@ from datetime import timedelta
 
 import pendulum
 from airflow.decorators import dag, task
-from airflow.hooks.base import BaseHook
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
 from citadel.druid.ingestion import run_ingestion
@@ -71,20 +70,8 @@ def ingestion_process_workflow():
         request: dict,
     ) -> dict:
 
-        conn = BaseHook.get_connection("druid_default")
-
-        druid_url = (conn.host or "").rstrip("/")
-
-        if not druid_url or not conn.login or not conn.password:
-            raise ValueError(
-                "druid_default must contain host, login and password"
-            )
-
         return run_ingestion(
             parquet_files=request["files"],
-            druid_url=druid_url,
-            username=conn.login,
-            password=conn.password,
             ingestion_spec_path=request["ingestion_spec_path"],
         )
 

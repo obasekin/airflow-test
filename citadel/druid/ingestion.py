@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 import requests
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
+from citadel.druid.credentials import get_druid_credentials
+
 
 # ============================================================
 # CONFIG
@@ -823,10 +825,8 @@ def monitor_task(
 
 def run_ingestion(
     parquet_files: List[str],
-    druid_url: str,
-    username: str,
-    password: str,
     ingestion_spec_path: str,
+    conn_id: str | None = None,
 ) -> Dict[str, Any]:
 
     if not parquet_files:
@@ -836,6 +836,8 @@ def run_ingestion(
         raise ValueError(
             "ingestion_spec_path cannot be empty"
         )
+
+    druid_url, username, password = get_druid_credentials(conn_id)
 
     # ========================================================
     # INGESTION SPEC

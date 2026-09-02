@@ -28,6 +28,7 @@ from email.message import EmailMessage
 from airflow.sdk import DAG, task
 from airflow.hooks.base import BaseHook
 from citadel.notifications.email import send_email
+from citadel.druid.query_executor import execute_query
 
 
 TEST_RECIPIENT = "obasekin@arcanor.com"  # ihtiyaca gore degistirin
@@ -43,12 +44,18 @@ def _build_context(verify: bool) -> ssl.SSLContext:
 
 
 def _try_send(conn, verify_ssl: bool, label: str):
+    result = execute_query("""
+    SELECT *
+    FROM "TURtest"
+    WHERE "day" IN (4)
+    LIMIT 10
+    """)
     send_email(
     to=["obasekin@arcanor.com"],
     cc="obasekin@arcanor.com",
     subject="IO Control Report",
-    html_content="<h2>Report</h2><table>...</table>",
-    )
+    html_content=f"<h2>Report</h2><table>{result}</table>",
+    ) 
     host = conn.host
     port = conn.port or 587
     login = conn.login

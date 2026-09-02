@@ -72,7 +72,7 @@ default_args = {
 # ============================================================
 
 @dag(
-    dag_id="BEL_daily_dag_weekday",
+    dag_id=f"{COUNTRY}_daily_dag_weekday",
     default_args=default_args,
     start_date=pendulum.datetime(
         2026,
@@ -405,9 +405,6 @@ def druid_ingestion_workflow():
         k_suffix: str,
     ):
 
-        from airflow.hooks.base import BaseHook
-
-
         # ========================================================
         # MANIFEST INFORMATION
         # ========================================================
@@ -454,44 +451,11 @@ def druid_ingestion_workflow():
             print(parquet_file)
 
         # ========================================================
-        # DRUID CONNECTION
-        # ========================================================
-
-        conn = BaseHook.get_connection(
-            "druid_default"
-        )
-
-        druid_url = (
-            conn.host or ""
-        ).rstrip("/")
-
-        username = conn.login
-        password = conn.password
-
-        if not druid_url:
-            raise ValueError(
-                "Druid URL is not configured"
-            )
-
-        if not username:
-            raise ValueError(
-                "Druid username is not configured"
-            )
-
-        if not password:
-            raise ValueError(
-                "Druid password is not configured"
-            )
-
-        # ========================================================
         # INGESTION
         # ========================================================
 
         result = run_ingestion(
             parquet_files=parquet_files,
-            druid_url=druid_url,
-            username=username,
-            password=password,
             ingestion_spec_path=str(INGESTION_SPEC),
         )
 
