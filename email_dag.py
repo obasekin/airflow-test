@@ -46,7 +46,7 @@ def _build_context(verify: bool) -> ssl.SSLContext:
 def _try_send(conn, verify_ssl: bool, label: str):
     result = execute_query("""
     SELECT *
-    FROM "TURtest"
+    FROM "TUR"
     WHERE "day" IN (4)
     LIMIT 10
     """)
