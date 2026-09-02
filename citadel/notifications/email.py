@@ -11,6 +11,138 @@ from email.utils import formatdate
 from airflow.sdk import BaseHook, BaseNotifier, Context
 
 
+class EmailService:
+    """Send generic HTML emails using an Airflow SMTP connection."""
+
+    def __init__(self, conn_id: str = "smtp_default"):
+        self.conn_id = conn_id
+
+    def send_email(
+        self,
+        *,
+        to: str | Iterable[str],
+        subject: str,
+        html_content: str,
+        cc: str | Iterable[str] | None = None,
+    ) -> None:
+        recipients = self._normalize_recipients(to, "to")
+        cc_recipients = self._normalize_recipients(cc, "cc")
+        all_recipients = recipients + cc_recipients
+
+        conn = BaseHook.get_connection(self.conn_id)
+        smtp_host = conn.host
+        if not smtp_host:
+            raise ValueError(
+                f"SMTP connection '{self.conn_id}' has no host."
+            )
+
+        extra = conn.extra_dejson or {}
+        disable_ssl = extra.get("disable_ssl", True)
+        disable_tls = extra.get("disable_tls", False)
+        smtp_port = conn.port or (587 if disable_ssl else 465)
+        timeout = int(extra.get("timeout", 30))
+        retry_limit = int(extra.get("retry_limit", 5))
+        smtp_user = conn.login
+        smtp_password = conn.password
+        from_email = extra.get("from_email") or smtp_user
+
+        if not from_email:
+            raise ValueError(
+                f"SMTP connection '{self.conn_id}' has no login/from_email."
+            )
+
+        msg = MIMEMultipart("alternative")
+        msg["From"] = from_email
+        msg["To"] = ", ".join(recipients)
+        if cc_recipients:
+            msg["Cc"] = ", ".join(cc_recipients)
+        msg["Subject"] = subject
+        msg["Date"] = formatdate(localtime=True)
+        msg.attach(MIMEText(html_content, "html", "utf-8"))
+
+        ssl_context = (
+            ssl._create_unverified_context()
+            if disable_ssl
+            else ssl.create_default_context()
+        )
+
+        for attempt in range(retry_limit + 1):
+            try:
+                if not disable_ssl:
+                    with smtplib.SMTP_SSL(
+                        smtp_host,
+                        smtp_port,
+                        timeout=timeout,
+                        context=ssl_context,
+                    ) as server:
+                        server.ehlo()
+                        if smtp_user and smtp_password:
+                            server.login(smtp_user, smtp_password)
+                        server.sendmail(
+                            from_email,
+                            all_recipients,
+                            msg.as_string(),
+                        )
+                else:
+                    with smtplib.SMTP(
+                        smtp_host,
+                        smtp_port,
+                        timeout=timeout,
+                    ) as server:
+                        server.ehlo()
+                        if not disable_tls:
+                            server.starttls(context=ssl_context)
+                            server.ehlo()
+                        if smtp_user and smtp_password:
+                            server.login(smtp_user, smtp_password)
+                        server.sendmail(
+                            from_email,
+                            all_recipients,
+                            msg.as_string(),
+                        )
+                return
+            except (smtplib.SMTPException, OSError, ssl.SSLError):
+                if attempt >= retry_limit:
+                    raise
+
+    @staticmethod
+    def _normalize_recipients(
+        addresses: str | Iterable[str] | None,
+        field_name: str,
+    ) -> list[str]:
+        if isinstance(addresses, str):
+            recipients = [addresses.strip()] if addresses.strip() else []
+        elif addresses is None:
+            recipients = []
+        else:
+            recipients = [
+                address.strip()
+                for address in addresses
+                if isinstance(address, str) and address.strip()
+            ]
+
+        if field_name == "to" and not recipients:
+            raise ValueError("EmailService requires at least one 'to' recipient.")
+        return recipients
+
+
+def send_email(
+    *,
+    to: str | Iterable[str],
+    subject: str,
+    html_content: str,
+    cc: str | Iterable[str] | None = None,
+    conn_id: str = "smtp_default",
+) -> None:
+    """Send a generic HTML email from any task or Python code."""
+    EmailService(conn_id=conn_id).send_email(
+        to=to,
+        cc=cc,
+        subject=subject,
+        html_content=html_content,
+    )
+
+
 class EmailNotifier(BaseNotifier):
 
     template_fields = (
