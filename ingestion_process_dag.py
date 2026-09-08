@@ -1,0 +1,83 @@
+import importlib
+from datetime import timedelta
+
+import pendulum
+from airflow.decorators import dag, task
+from airflow.providers.google.cloud.hooks.gcs import GCSHook
+
+from citadel.druid.ingestion import run_ingestion
+from citadel.notifications.email import EmailNotifier
+
+failure_email = EmailNotifier(
+    to_email=["obasekin@arcanor.com", "ucelik@arcanor.com"],
+)
+
+default_args = {
+    "owner": "obasekin",
+    "retries": 3,
+    "retry_delay": timedelta(minutes=5),
+    "on_failure_callback": failure_email,
+}
+
+@dag(
+    dag_id="ingestion_process_dag",
+    default_args=default_args,
+    schedule=None,
+    start_date=pendulum.datetime(
+        2026,
+        8,
+        18,
+        tz="UTC",
+    ),
+    catchup=False,
+    max_active_runs=1,
+    max_active_tasks=1,
+    render_template_as_native_obj=True,
+    tags=[
+        "druid",
+        "ingestion",
+        "child-dag",
+    ],
+)
+def ingestion_process_workflow():
+
+    @task
+    def read_request(**kwargs) -> dict:
+        conf = kwargs["dag_run"].conf or {}
+        country = conf.get("country")
+        files = conf.get("files")
+        ingestion_spec_path = conf.get("ingestion_spec_path")
+
+        if country not in ("BEL", "NLD", "TURv2", "TUR"):
+            raise ValueError(
+                "country must be BEL, NLD or TURv2"
+            )
+
+        if not isinstance(files, list) or not files:
+            raise ValueError(
+                "files must contain at least one parquet URI"
+            )
+
+        if not ingestion_spec_path:
+            raise ValueError(
+                "ingestion_spec_path is required"
+            )
+
+        return conf
+
+    @task(execution_timeout=timedelta(hours=2), retries=3)
+    def execute_idempotent_druid_ingestion(
+        request: dict,
+    ) -> dict:
+
+        return run_ingestion(
+            parquet_files=request["files"],
+            ingestion_spec_path=request["ingestion_spec_path"],
+        )
+
+    request = read_request()
+    ingestion = execute_idempotent_druid_ingestion(request=request)
+    request >> ingestion
+
+
+ingestion_process_workflow()
