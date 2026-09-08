@@ -1,0 +1,77 @@
+countries:
+  TUR:
+    manifest_prefixes:
+      k1: eskimi
+      k2: location
+      k3: irys
+      k4: veraset
+    email:
+      - obasekin@arcanor.com
+      - ucelik@arcanor.com
+    timezone: Europe/Istanbul
+    schedule: "0 8 * * *"
+    bucket: arcanor-orion
+    paths:
+      gcs_base: "output/mobility/{country}"
+      ingestion_spec: "scripts/{country}/{country}_druid_ingestion/ingestion_spec.json"
+    metadata:
+      owner: obasekin
+      retries: 3
+      retry_delay_minutes: 5
+      start_date: "2026-08-18"
+      tags:
+        - druid
+        - ingestion
+        - taskgroup
+        - idempotent
+        - branching
+
+  NLD:
+    manifest_prefixes:
+      k3: irys
+      k4: veraset
+    email:
+      - obasekin@arcanor.com
+      - ucelik@arcanor.com
+    timezone: Europe/Istanbul
+    schedule: "0 8 * * *"
+    bucket: arcanor-orion
+    paths:
+      gcs_base: "output/mobility/{country}"
+      ingestion_spec: "scripts/{country}/{country}_druid_ingestion/ingestion_spec.json"
+    metadata:
+      owner: obasekin
+      retries: 3
+      retry_delay_minutes: 5
+      start_date: "2026-08-18"
+      tags:
+        - druid
+        - ingestion
+        - taskgroup
+        - idempotent
+        - branching
+
+  BEL:
+    manifest_prefixes:
+      k3: irys
+      k4: veraset
+    email:
+      - obasekin@arcanor.com
+      - ucelik@arcanor.com
+    timezone: Europe/Istanbul
+    schedule: "0 8 * * *"
+    bucket: arcanor-orion
+    paths:
+      gcs_base: "output/mobility/{country}"
+      ingestion_spec: "scripts/{country}/{country}_druid_ingestion/ingestion_spec.json"
+    metadata:
+      owner: obasekin
+      retries: 3
+      retry_delay_minutes: 5
+      start_date: "2026-08-18"
+      tags:
+        - druid
+        - ingestion
+        - taskgroup
+        - idempotent
+        - branching
