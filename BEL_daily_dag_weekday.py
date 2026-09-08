@@ -37,6 +37,7 @@ GCS_BASE_PATH = f"output/mobility/{COUNTRY}"
 
 MANIFEST_PREFIXES = {
     "k3": "irys",
+    "k4": "veraset",
 }
 
 failure_email = EmailNotifier(

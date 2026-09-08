@@ -39,7 +39,6 @@ GCS_BASE_PATH = f"output/mobility/{COUNTRY}"
 MANIFEST_PREFIXES = {
     "k1": "eskimi",
     "k2": "location",
-    "k3": "irys",
     "k4": "veraset",
 }
 
