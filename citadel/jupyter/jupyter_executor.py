@@ -203,20 +203,36 @@ def _create_notebook(
             "nbformat_minor": 4,
         },
     }
+    contents_url = (
+        f"{config['base_url']}/user/{config['username']}/api/contents"
+    )
     response = _session(conn_id).put(
-        f"{config['base_url']}/user/{config['username']}/api/contents/"
-        f"{notebook_name}",
+        f"{contents_url}/{notebook_name}",
         json=notebook,
         timeout=DEFAULT_TIMEOUT,
         allow_redirects=False,
     )
+    if response.status_code == 405:
+        # Some JupyterHub deployments expose notebook creation as POST on the
+        # contents directory, while the standard API uses PUT on the file path.
+        response = _session(conn_id).post(
+            contents_url,
+            json={
+                **notebook,
+                "name": notebook_name,
+            },
+            timeout=DEFAULT_TIMEOUT,
+            allow_redirects=False,
+        )
     response.raise_for_status()
+    created_path = response.json().get("path", notebook_name)
+    created_name = created_path.rsplit("/", 1)[-1]
     return {
-        "notebook_name": notebook_name,
-        "notebook_path": response.json().get("path", notebook_name),
+        "notebook_name": created_name,
+        "notebook_path": created_path,
         "notebook_url": (
             f"{config['base_url']}/user/{config['username']}/notebooks/"
-            f"{notebook_name}"
+            f"{created_path}"
         ),
     }
 
