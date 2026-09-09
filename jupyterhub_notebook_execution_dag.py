@@ -20,6 +20,13 @@ DRUID_HOST = "10.10.0.42"
 DRUID_PORT = 30101
 DRUID_PATH = "/druid/v2/sql/"
 DRUID_SCHEME = "http"
+QUERY = """
+select COUNT(DISTINCT "maid"), "day" from "TUR"
+WHERE __time >= TIMESTAMP '2026-09-01 00:00:00'
+  AND __time < TIMESTAMP '2026-09-06 00:00:00'
+GROUP BY "day"
+"""
+
 
 default_args = {
     "owner": "data-engineering",
@@ -72,12 +79,7 @@ druid_connection = connect(
 druid_cursor = druid_connection.cursor()
 start = time.time()
 
-query = \"\"\"
-select COUNT(DISTINCT "maid"), "day" from "TUR"
-WHERE __time >= TIMESTAMP '2026-09-01 00:00:00'
-  AND __time < TIMESTAMP '2026-09-06 00:00:00'
-GROUP BY "day"
-\"\"\"
+query = \"\"\"{QUERY.strip()}\"\"\"
 
 druid_cursor.execute(query)
 result = druid_cursor.fetchall()
