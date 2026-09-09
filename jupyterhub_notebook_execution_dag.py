@@ -9,6 +9,7 @@ from citadel.jupyter.jupyter_executor import (
 
 
 DAG_ID = "jupyterhub_notebook_execution"
+FAIL_ON_NOTEBOOK_ERROR = True
 QUERY = """
 select COUNT(DISTINCT "maid"), "day" from "TUR"
 WHERE __time >= TIMESTAMP '2026-09-01 00:00:00'
@@ -61,6 +62,7 @@ with DAG(
     def execute_notebook_druid_query() -> dict:
         result = execute_druid_query_in_notebook(
             code=NOTEBOOK_CODE.replace("{query}", QUERY.strip()),
+            fail_on_execution_error=FAIL_ON_NOTEBOOK_ERROR,
         )
         return result
 

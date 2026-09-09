@@ -287,6 +287,7 @@ def run_notebook_workflow(
     conn_id: str = DEFAULT_CONN_ID,
     notebook_name: str | None = None,
     timeout: int = DEFAULT_TIMEOUT,
+    fail_on_execution_error: bool = True,
 ) -> dict[str, Any]:
     """Create a notebook, execute code in JupyterHub, and return its result."""
     if not code.strip():
@@ -306,13 +307,24 @@ def run_notebook_workflow(
         notebook,
         conn_id,
     )
-    return {
-        "status": "success",
+    status = (
+        "success"
+        if execution["execution_status"] == "ok"
+        else "failed"
+    )
+    result = {
+        "status": status,
         **notebook_info,
         "kernel_id": kernel_id,
         "execution_status": execution["execution_status"],
         "outputs": execution["outputs"],
     }
+    if fail_on_execution_error and status == "failed":
+        raise RuntimeError(
+            "Notebook execution failed: "
+            f"{execution['execution_status'] or 'unknown status'}"
+        )
+    return result
 
 
 def execute_notebook_code(
@@ -320,6 +332,7 @@ def execute_notebook_code(
     conn_id: str = DEFAULT_CONN_ID,
     notebook_name: str | None = None,
     timeout: int = DEFAULT_TIMEOUT,
+    fail_on_execution_error: bool = True,
 ) -> dict[str, Any]:
     """Public executor entry point for DAG tasks and other callers."""
     return run_notebook_workflow(
@@ -327,6 +340,7 @@ def execute_notebook_code(
         conn_id=conn_id,
         notebook_name=notebook_name,
         timeout=timeout,
+        fail_on_execution_error=fail_on_execution_error,
     )
 
 
@@ -335,6 +349,7 @@ def execute_druid_query_in_notebook(
     jupyter_conn_id: str = DEFAULT_CONN_ID,
     druid_conn_id: str = DEFAULT_DRUID_CONN_ID,
     timeout: int = DEFAULT_TIMEOUT,
+    fail_on_execution_error: bool = True,
 ) -> dict[str, Any]:
     """Validate connections and execute caller-provided code in one notebook."""
     if not code.strip():
@@ -373,6 +388,7 @@ print(f"Time: {{elapsed / 60:.2f}} minutes")
         code=notebook_code,
         conn_id=jupyter_conn_id,
         timeout=timeout,
+        fail_on_execution_error=fail_on_execution_error,
     )
     logger.info("JupyterHub base URL: %s", connection_check["base_url"])
     logger.info("Notebook URL: %s", result.get("notebook_url"))
