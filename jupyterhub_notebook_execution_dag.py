@@ -30,8 +30,8 @@ druid_connection = connect(
 )
 
 druid_cursor = druid_connection.cursor()
-
-query = \"\"\"
+aboniiöiş
+query = \"\"\"mnkn
 {query}
 \"\"\"
 
