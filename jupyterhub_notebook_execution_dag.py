@@ -79,7 +79,9 @@ druid_connection = connect(
 druid_cursor = druid_connection.cursor()
 start = time.time()
 
-query = \"\"\"{QUERY.strip()}\"\"\"
+query = \"\"\"
+{QUERY.strip()}
+\"\"\"
 
 druid_cursor.execute(query)
 result = druid_cursor.fetchall()
