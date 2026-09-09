@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.decorators import task
+from airflow.hooks.base import BaseHook
 
 from citadel.jupyter.jupyter_executor import (
     check_jupyterhub_connection,
@@ -14,6 +15,11 @@ from citadel.jupyter.jupyter_executor import (
 
 DAG_ID = "jupyterhub_notebook_execution"
 CONN_ID = "jupyterhub_default"
+DRUID_CONN_ID = "druid_default"
+DRUID_HOST = "10.10.0.42"
+DRUID_PORT = 30101
+DRUID_PATH = "/druid/v2/sql/"
+DRUID_SCHEME = "http"
 
 default_args = {
     "owner": "data-engineering",
@@ -42,8 +48,47 @@ with DAG(
         return result
 
     @task
-    def execute_notebook_calculation() -> dict:
-        code = "result = 2 * 2\nprint(f'Calculation: 2 * 2 = {result}')"
+    def execute_notebook_druid_query() -> dict:
+        conn = BaseHook.get_connection(DRUID_CONN_ID)
+        druid_username = conn.login or ""
+        druid_password = conn.password or ""
+        if not druid_username or not druid_password:
+            raise ValueError("Druid username and password are required")
+
+        code = f"""
+import time
+
+from pydruid.db import connect
+
+druid_connection = connect(
+    host={DRUID_HOST!r},
+    port={DRUID_PORT!r},
+    path={DRUID_PATH!r},
+    scheme={DRUID_SCHEME!r},
+    user={druid_username!r},
+    password={druid_password!r},
+)
+
+druid_cursor = druid_connection.cursor()
+start = time.time()
+
+query = \"\"\"
+select COUNT(DISTINCT "maid"), "day" from "TUR"
+WHERE __time >= TIMESTAMP '2026-09-01 00:00:00'
+  AND __time < TIMESTAMP '2026-09-06 00:00:00'
+GROUP BY "day"
+\"\"\"
+
+druid_cursor.execute(query)
+result = druid_cursor.fetchall()
+
+elapsed = time.time() - start
+
+print(f"Result: {{result}}")
+print(f"Time: {{elapsed:.2f}} seconds")
+print(f"Time: {{elapsed / 60:.2f}} minutes")
+"""
+
         result = execute_notebook_code(code=code, conn_id=CONN_ID)
         logging.info("Notebook URL: %s", result.get("notebook_url"))
         logging.info(
@@ -66,6 +111,6 @@ with DAG(
         }
 
     check_conn = verify_jupyterhub_connection()
-    exec_result = execute_notebook_calculation()
+    exec_result = execute_notebook_druid_query()
     process_result = process_notebook_result(exec_result)
     check_conn >> exec_result >> process_result
