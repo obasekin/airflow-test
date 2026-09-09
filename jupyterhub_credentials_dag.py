@@ -12,7 +12,7 @@ from scripts.jupyterhub_credentials.jupyterhub_credentials import (
 )
 
 
-DAG_ID = "jupyterhub_notebook_execution2"
+DAG_ID = "notebook_execution"
 
 
 default_args = {
