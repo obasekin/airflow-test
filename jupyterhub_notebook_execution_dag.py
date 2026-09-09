@@ -14,7 +14,7 @@ QUERY = """
 select COUNT(DISTINCT "maid"), "day" from "TUR"
 WHERE __time >= TIMESTAMP '2026-09-01 00:00:00'
   AND __time < TIMESTAMP '2026-09-06 00:00:00'
-GROUP BY "day"knk
+GROUP BY "day"
 """
 
 NOTEBOOK_CODE = """
