@@ -156,6 +156,18 @@ def _list_kernels(conn_id: str) -> list[dict[str, Any]]:
     return response.json()
 
 
+def _create_kernel(conn_id: str) -> dict[str, Any]:
+    config = get_jupyterhub_config(conn_id)
+    response = _session(conn_id).post(
+        f"{config['base_url']}/user/{config['username']}/api/kernels",
+        json={"name": "python3"},
+        timeout=DEFAULT_TIMEOUT,
+        allow_redirects=False,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def _select_kernel(conn_id: str) -> str:
     kernels = _list_kernels(conn_id)
     idle = [
@@ -167,18 +179,13 @@ def _select_kernel(conn_id: str) -> str:
     candidates = idle or [
         kernel for kernel in kernels if kernel.get("name") == "python3"
     ]
-    if not candidates:
-        raise RuntimeError("No python3 JupyterHub kernel found")
-    return candidates[0]["id"]
+    if candidates:
+        return candidates[0]["id"]
+    return _create_kernel(conn_id)["id"]
 
 
-def _create_notebook(
-    code: str,
-    conn_id: str,
-    notebook_name: str,
-) -> dict[str, str]:
-    config = get_jupyterhub_config(conn_id)
-    notebook = {
+def _notebook_payload(code: str) -> dict[str, Any]:
+    return {
         "type": "notebook",
         "format": "json",
         "content": {
@@ -203,6 +210,14 @@ def _create_notebook(
             "nbformat_minor": 4,
         },
     }
+
+
+def _save_notebook(
+    notebook_name: str,
+    notebook: dict[str, Any],
+    conn_id: str,
+) -> dict[str, str]:
+    config = get_jupyterhub_config(conn_id)
     contents_url = (
         f"{config['base_url']}/user/{config['username']}/api/contents"
     )
@@ -235,6 +250,15 @@ def _create_notebook(
             f"{created_path}"
         ),
     }
+
+
+def _create_notebook(
+    code: str,
+    conn_id: str,
+    notebook_name: str,
+) -> tuple[dict[str, str], dict[str, Any]]:
+    notebook = _notebook_payload(code)
+    return _save_notebook(notebook_name, notebook, conn_id), notebook
 
 
 def _execute_in_kernel(
@@ -351,12 +375,23 @@ def run_notebook_workflow(
     if not code.strip():
         raise ValueError("code cannot be empty")
     name = notebook_name or f"airflow_notebook_{int(time.time())}.ipynb"
-    notebook = _create_notebook(code, conn_id, name)
+    notebook_info, notebook = _create_notebook(code, conn_id, name)
     kernel_id = _select_kernel(conn_id)
     execution = _execute_in_kernel(code, kernel_id, conn_id, timeout)
+    notebook_cell = notebook["content"]["cells"][0]
+    notebook_cell["execution_count"] = 1
+    notebook_cell["outputs"] = [
+        _as_notebook_output(output)
+        for output in execution["outputs"]
+    ]
+    _save_notebook(
+        notebook_info["notebook_name"],
+        notebook,
+        conn_id,
+    )
     return {
         "status": "success",
-        **notebook,
+        **notebook_info,
         "kernel_id": kernel_id,
         "execution_status": execution["execution_status"],
         "outputs": execution["outputs"],
@@ -376,6 +411,35 @@ def execute_notebook_code(
         notebook_name=notebook_name,
         timeout=timeout,
     )
+
+
+def _as_notebook_output(output: dict[str, Any]) -> dict[str, Any]:
+    output_type = output.get("type")
+    if output_type == "stream":
+        return {
+            "name": "stdout",
+            "output_type": "stream",
+            "text": output.get("text", ""),
+        }
+    if output_type in {"execute_result", "display_data"}:
+        return {
+            "output_type": output_type,
+            "metadata": {},
+            "data": output.get("data", {}),
+            **(
+                {"execution_count": 1}
+                if output_type == "execute_result"
+                else {}
+            ),
+        }
+    if output_type == "error":
+        return {
+            "output_type": "error",
+            "ename": output.get("ename", "Error"),
+            "evalue": output.get("evalue", ""),
+            "traceback": output.get("traceback", []),
+        }
+    return output
 
 
 logger = logging.getLogger(__name__)
