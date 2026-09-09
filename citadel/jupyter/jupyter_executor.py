@@ -319,10 +319,23 @@ def run_notebook_workflow(
         "execution_status": execution["execution_status"],
         "outputs": execution["outputs"],
     }
+    logger.info("Notebook URL: %s", result["notebook_url"])
+    logger.info("Execution status: %s", result["execution_status"])
+    logger.info(
+        "Notebook outputs:\n%s",
+        json.dumps(result["outputs"], indent=2, ensure_ascii=False),
+    )
     if fail_on_execution_error and status == "failed":
+        error_outputs = [
+            output
+            for output in execution["outputs"]
+            if output.get("type") == "error"
+        ]
         raise RuntimeError(
             "Notebook execution failed: "
-            f"{execution['execution_status'] or 'unknown status'}"
+            f"{execution['execution_status'] or 'unknown status'}. "
+            f"Notebook URL: {result['notebook_url']}. "
+            f"Errors: {json.dumps(error_outputs, ensure_ascii=False)}"
         )
     return result
 
@@ -384,13 +397,13 @@ elapsed = time.time() - start
 print(f"Time: {{elapsed:.2f}} seconds")
 print(f"Time: {{elapsed / 60:.2f}} minutes")
 """
+    logger.info("JupyterHub base URL: %s", connection_check["base_url"])
     result = execute_notebook_code(
         code=notebook_code,
         conn_id=jupyter_conn_id,
         timeout=timeout,
         fail_on_execution_error=fail_on_execution_error,
     )
-    logger.info("JupyterHub base URL: %s", connection_check["base_url"])
     logger.info("Notebook URL: %s", result.get("notebook_url"))
     logger.info("Execution status: %s", result.get("execution_status"))
     logger.info(
