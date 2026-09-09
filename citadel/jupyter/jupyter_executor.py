@@ -1,105 +1,22 @@
 import json
 import logging
-import os
 import ssl
 import time
 import uuid
 from typing import Any
+from urllib.parse import urlsplit
 
 import requests
 import websocket
-from airflow.hooks.base import BaseHook
 
+from citadel.druid.credentials import get_druid_credentials
+from citadel.jupyter.credentials import (
+    DEFAULT_CONN_ID,
+    get_jupyterhub_config,
+)
 
-DEFAULT_CONN_ID = "jupyterhub_default"
+DEFAULT_DRUID_CONN_ID = "druid_default"
 DEFAULT_TIMEOUT = 60
-
-
-def _read_extra_value(extra: dict[str, Any], *keys: str) -> str:
-    for key in keys:
-        value = extra.get(key)
-        if value not in (None, ""):
-            return str(value)
-    return ""
-
-
-def get_jupyterhub_config(
-    conn_id: str = DEFAULT_CONN_ID,
-) -> dict[str, str]:
-    """Load and validate JupyterHub settings from an Airflow connection."""
-    config = {
-        "base_url": "",
-        "username": "",
-        "token": "",
-        "cf_access_client_id": "",
-        "cf_access_client_secret": "",
-    }
-    try:
-        conn = BaseHook.get_connection(conn_id)
-    except Exception as exc:
-        logging.debug(
-            "JupyterHub Airflow connection %s unavailable; using environment fallback: %s",
-            conn_id,
-            exc,
-        )
-    else:
-        extra = conn.extra_dejson or {}
-        config["base_url"] = (conn.host or "").rstrip("/")
-        config["username"] = conn.login or ""
-        config["token"] = conn.password or ""
-        config["cf_access_client_id"] = _read_extra_value(
-            extra,
-            "cf_access_client_id",
-            "CF-Access-Client-Id",
-            "cloudflare_client_id",
-        )
-        config["cf_access_client_secret"] = _read_extra_value(
-            extra,
-            "cf_access_client_secret",
-            "CF-Access-Client-Secret",
-            "cloudflare_client_secret",
-        )
-
-    config["base_url"] = (
-        config["base_url"]
-        or os.getenv("JUPYTERHUB_BASE_URL")
-        or os.getenv("JUPYTER_URL")
-        or ""
-    ).rstrip("/")
-    config["username"] = (
-        config["username"]
-        or os.getenv("JUPYTERHUB_USERNAME")
-        or os.getenv("JUPYTER_USERNAME")
-        or ""
-    )
-    config["token"] = (
-        config["token"]
-        or os.getenv("JUPYTERHUB_TOKEN")
-        or os.getenv("JUPYTER_TOKEN")
-        or ""
-    )
-    config["cf_access_client_id"] = (
-        config["cf_access_client_id"]
-        or os.getenv("CF_ACCESS_CLIENT_ID")
-        or os.getenv("JUPYTERHUB_CF_ACCESS_CLIENT_ID")
-        or ""
-    )
-    config["cf_access_client_secret"] = (
-        config["cf_access_client_secret"]
-        or os.getenv("CF_ACCESS_CLIENT_SECRET")
-        or os.getenv("JUPYTERHUB_CF_ACCESS_CLIENT_SECRET")
-        or ""
-    )
-
-    for field, label in (
-        ("base_url", "base URL"),
-        ("username", "username"),
-        ("token", "token"),
-    ):
-        if not config[field]:
-            raise ValueError(f"JupyterHub {label} is not configured")
-
-    return config
 
 
 def _session(conn_id: str) -> requests.Session:
@@ -411,6 +328,61 @@ def execute_notebook_code(
         notebook_name=notebook_name,
         timeout=timeout,
     )
+
+
+def execute_druid_query_in_notebook(
+    code: str,
+    jupyter_conn_id: str = DEFAULT_CONN_ID,
+    druid_conn_id: str = DEFAULT_DRUID_CONN_ID,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Validate connections and execute caller-provided code in one notebook."""
+    if not code.strip():
+        raise ValueError("code cannot be empty")
+
+    connection_check = check_jupyterhub_connection(jupyter_conn_id)
+    druid_url, username, password = get_druid_credentials(druid_conn_id)
+    if "://" not in druid_url:
+        druid_url = f"http://{druid_url}"
+    parsed_url = urlsplit(druid_url)
+    host = parsed_url.hostname
+    if not host:
+        raise ValueError("Druid host is invalid")
+    scheme = parsed_url.scheme or "http"
+    port = parsed_url.port or (443 if scheme == "https" else 8082)
+    path = "/druid/v2/sql/"
+
+    notebook_code = f"""
+import time
+start = time.time()
+
+{code.format(
+    host=host,
+    port=port,
+    path=path,
+    scheme=scheme,
+    username=username,
+    password=password,
+)}
+
+elapsed = time.time() - start
+print(f"Time: {{elapsed:.2f}} seconds")
+print(f"Time: {{elapsed / 60:.2f}} minutes")
+"""
+    result = execute_notebook_code(
+        code=notebook_code,
+        conn_id=jupyter_conn_id,
+        timeout=timeout,
+    )
+    logger.info("JupyterHub base URL: %s", connection_check["base_url"])
+    logger.info("Notebook URL: %s", result.get("notebook_url"))
+    logger.info("Execution status: %s", result.get("execution_status"))
+    logger.info(
+        "Notebook outputs:\n%s",
+        json.dumps(result.get("outputs", []), indent=2),
+    )
+    result["connection_check"] = connection_check
+    return result
 
 
 def _as_notebook_output(output: dict[str, Any]) -> dict[str, Any]:
