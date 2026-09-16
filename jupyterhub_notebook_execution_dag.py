@@ -80,16 +80,56 @@ with DAG(
         )
         return result
 
-    @task
-    def send_email_report(result_list: list):
+    @task(
+        task_id="sonuclari_mail_at",
+        retries=1
+    )
+    def send_email_report(query_result: dict):
         html = "<h3>Druid Query Results</h3>\n"
-        if not result_list:
-            html += "<p>No results returned.</p>"
+        
+        notebook_url = query_result.get("notebook_url", "")
+        if notebook_url:
+            html += f'<p><b>Notebook:</b> <a href="{notebook_url}">{notebook_url}</a></p>\n'
+            
+        outputs = query_result.get("outputs", [])
+        
+        if not outputs:
+            html += "<p>No outputs returned from notebook.</p>"
         else:
-            html += "<ul>\n"
-            for row in result_list:
-                html += f"  <li>{row}</li>\n"
-            html += "</ul>\n"
+            for item in outputs:
+                if isinstance(item, dict) and item.get("type") == "stream" and "text" in item:
+                    text = item["text"]
+                    
+                    # Parse rows
+                    match = re.search(r'Result:\s*\[(.*?)\]', text, re.DOTALL)
+                    if match:
+                        rows_str = match.group(1)
+                        row_matches = re.findall(r'Row\((.*?)\)', rows_str)
+                        if row_matches:
+                            html += "<table border='1' cellpadding='8' cellspacing='0' style='border-collapse: collapse;'>\n"
+                            # Headers
+                            first_row_items = row_matches[0].split(',')
+                            headers = [i.split('=')[0].strip() for i in first_row_items]
+                            html += "<tr style='background-color: #f2f2f2;'>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>\n"
+                            
+                            # Rows
+                            for row_str in row_matches:
+                                html += "<tr>"
+                                items = row_str.split(',')
+                                for i in items:
+                                    val = i.split('=', 1)[1].strip() if '=' in i else ""
+                                    html += f"<td>{val}</td>"
+                                html += "</tr>\n"
+                                
+                            html += "</table>\n<br>\n"
+                    
+                    # Extract time metrics
+                    time_matches = re.findall(r'Time:\s*(.*)', text)
+                    if time_matches:
+                        html += "<h4>Execution Time</h4>\n<ul>\n"
+                        for tm in time_matches:
+                            html += f"<li>{tm}</li>\n"
+                        html += "</ul>\n"
 
         email_service = EmailService(conn_id=SMTP_CONN_ID)
         email_service.send_email(
