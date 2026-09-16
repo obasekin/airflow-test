@@ -2,7 +2,7 @@ import re
 from datetime import datetime, timedelta
 
 from airflow import DAG
-from airflow.decorators import task
+from airflow.operators.python import PythonOperator
 
 from citadel.jupyter.jupyter_executor import (
     execute_druid_query_in_notebook,
@@ -51,42 +51,37 @@ default_args = {
 }
 
 
-with DAG(
-    dag_id=DAG_ID,
-    default_args=default_args,
-    description="Execute code in JupyterHub and return notebook results via XCom",
-    start_date=datetime(2026, 8, 18),
-    schedule=None,
-    catchup=False,
-    tags=["jupyterhub", "notebook", "airflow"],
-) as dag:
+def format_logical_date(**kwargs) -> dict:
+    logical_date = kwargs["logical_date"]
+    start_time = (logical_date - timedelta(days=5)).strftime("%Y-%m-%d 00:00:00")
+    end_time = logical_date.strftime("%Y-%m-%d 00:00:00")
+    return {"start_time": start_time, "end_time": end_time}
 
-    @task
-    def format_logical_date(**kwargs) -> dict:
-        logical_date = kwargs["logical_date"]
-        start_time = (logical_date - timedelta(days=5)).strftime("%Y-%m-%d 00:00:00")
-        end_time = logical_date.strftime("%Y-%m-%d 00:00:00")
-        return {"start_time": start_time, "end_time": end_time}
 
-    @task
-    def execute_notebook_druid_query(date_range: dict) -> list:
-        formatted_query = QUERY.format(
-            start_time=date_range["start_time"],
-            end_time=date_range["end_time"]
-        )
-        result = execute_druid_query_in_notebook(
-            code=NOTEBOOK_CODE.replace("{query}", formatted_query.strip()),
-            fail_on_execution_error=FAIL_ON_NOTEBOOK_ERROR,
-        )
-        return result
-
-    @task(
-        task_id="sonuclari_mail_at",
-        retries=1
+def execute_notebook_druid_query(**kwargs) -> dict:
+    ti = kwargs["ti"]
+    date_range = ti.xcom_pull(task_ids="format_logical_date")
+    
+    formatted_query = QUERY.format(
+        start_time=date_range["start_time"],
+        end_time=date_range["end_time"]
     )
-    def send_email_report(query_result: dict):
-        html = "<h3>Druid Query Results</h3>\n"
-        
+    result = execute_druid_query_in_notebook(
+        code=NOTEBOOK_CODE.replace("{query}", formatted_query.strip()),
+        fail_on_execution_error=FAIL_ON_NOTEBOOK_ERROR,
+    )
+    return result
+
+
+def send_email_report(**kwargs):
+    ti = kwargs["ti"]
+    query_result = ti.xcom_pull(task_ids="execute_notebook_druid_query")
+    
+    html = "<h3>Druid Query Results</h3>\n"
+    
+    if not query_result:
+        html += "<p>No outputs returned from notebook (result is empty).</p>"
+    else:
         notebook_url = query_result.get("notebook_url", "")
         if notebook_url:
             html += f'<p><b>Notebook:</b> <a href="{notebook_url}">{notebook_url}</a></p>\n'
@@ -131,16 +126,40 @@ with DAG(
                             html += f"<li>{tm}</li>\n"
                         html += "</ul>\n"
 
-        email_service = EmailService(conn_id=SMTP_CONN_ID)
-        email_service.send_email(
-            to="obasekin@arcanor.com",
-            cc="omerfarukbasekin@gmail.com",
-            subject="JupyterHub Druid Query Result",
-            html_content=html,
-        )
+    email_service = EmailService(conn_id=SMTP_CONN_ID)
+    email_service.send_email(
+        to=NOTIFICATION_EMAILS,
+        subject="JupyterHub Druid Query Result",
+        html_content=html,
+    )
 
-    # DAG Task Dependencies
-    date_range_xcom = format_logical_date()
-    query_result = execute_notebook_druid_query(date_range_xcom)
-    send_email_report(query_result)
+
+with DAG(
+    dag_id=DAG_ID,
+    default_args=default_args,
+    description="Execute code in JupyterHub and return notebook results via PythonOperator",
+    start_date=datetime(2026, 8, 18),
+    schedule=None,
+    catchup=False,
+    tags=["jupyterhub", "notebook", "airflow"],
+) as dag:
+
+    format_date_task = PythonOperator(
+        task_id="format_logical_date",
+        python_callable=format_logical_date,
+    )
+
+    execute_query_task = PythonOperator(
+        task_id="execute_notebook_druid_query",
+        python_callable=execute_notebook_druid_query,
+    )
+
+    send_email_task = PythonOperator(
+        task_id="sonuclari_mail_at",
+        python_callable=send_email_report,
+        retries=1,
+    )
+
+    # Manuel bagimliliklar:
+    format_date_task >> execute_query_task >> send_email_task
 
