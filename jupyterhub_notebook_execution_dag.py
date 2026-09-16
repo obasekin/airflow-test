@@ -86,32 +86,10 @@ with DAG(
         if not result_list:
             html += "<p>No results returned.</p>"
         else:
-            for item in result_list:
-                if isinstance(item, dict) and item.get("type") == "stream" and "text" in item:
-                    text = item["text"]
-                    match = re.search(r'Result:\s*\[(.*?)\]', text, re.DOTALL)
-                    if match:
-                        rows_str = match.group(1)
-                        row_matches = re.findall(r'Row\((.*?)\)', rows_str)
-                        if row_matches:
-                            html += "<table border='1' cellpadding='5' cellspacing='0'>\n"
-                            first_row_items = row_matches[0].split(',')
-                            headers = [i.split('=')[0].strip() for i in first_row_items]
-                            html += "<tr>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>\n"
-                            
-                            for row_str in row_matches:
-                                html += "<tr>"
-                                items = row_str.split(',')
-                                for i in items:
-                                    val = i.split('=', 1)[1].strip() if '=' in i else ""
-                                    html += f"<td>{val}</td>"
-                                html += "</tr>\n"
-                                
-                            html += "</table>\n"
-                    
-                    time_matches = re.findall(r'Time:.*', text)
-                    for tm in time_matches:
-                        html += f"<p><i>{tm}</i></p>\n"
+            html += "<ul>\n"
+            for row in result_list:
+                html += f"  <li>{row}</li>\n"
+            html += "</ul>\n"
 
         email_service = EmailService(conn_id=SMTP_CONN_ID)
         email_service.send_email(
