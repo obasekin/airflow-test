@@ -49,9 +49,9 @@ def ingestion_process_workflow():
         files = conf.get("files")
         ingestion_spec_path = conf.get("ingestion_spec_path")
 
-        if country not in ("BEL", "NLD", "TURv2", "TUR", "BELTEST"):
+        if country not in ("BEL", "NLD", "TURv2", "TUR", "BELtest"):
             raise ValueError(
-                "country must be BEL, NLD, TURv2, TUR or BELTEST"
+                "country must be BEL, NLD, TURv2, TUR or BELtest"
             )
 
         if not isinstance(files, list) or not files:
