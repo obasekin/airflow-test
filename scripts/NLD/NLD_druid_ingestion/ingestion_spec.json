@@ -33,7 +33,15 @@
             "name": "profile",
             "expression": "string_to_array(profile,',')"
           }
-        ]
+        ],
+        "filter": {
+          "type": "not",
+          "field": {
+            "type": "in",
+            "dimension": "geohash",
+            "values": []
+          }
+        }
       },
       "granularitySpec": {
         "queryGranularity": "hour",

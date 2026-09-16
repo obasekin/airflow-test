@@ -12,23 +12,13 @@ from airflow.providers.google.cloud.hooks.gcs import GCSHook
 from citadel.druid.credentials import get_druid_credentials
 
 
-# ============================================================
-# CONFIG
-# ============================================================
-
-GCS_CONN_ID = "google_cloud_default"
-
-LOG_BUCKET = "arcanor-airflow-logs"
-
-LOG_PREFIX = "logs/ingestion"
-
-# Druid status kontrol aralığı
-# 1 dakika
-POLL_INTERVAL = 60
-
-# Failed task retry sayısı
-MAX_RETRIES = 3
-
+from config import (
+    GCS_CONN_ID,
+    LOG_BUCKET,
+    LOG_PREFIX,
+    MAX_RETRIES,
+    POLL_INTERVAL,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -402,6 +392,7 @@ def find_active_ingestion(
 def load_ingestion_spec(
     parquet_files: list[str],
     ingestion_spec_path: str,
+    blocklist_geohashes: Optional[List[str]] = None,
 ) -> dict[str, Any]:
     """
     ingestion_spec.json okunur.
@@ -409,10 +400,9 @@ def load_ingestion_spec(
     Original dosya değiştirilmez.
 
     Sadece memory'deki spec'in:
-
-        spec.ioConfig.inputSource.uris
-
-    alanı değiştirilir.
+        - spec.ioConfig.inputSource.uris
+        - spec.dataSchema.transformSpec.filter.field.values (blocklist_geohashes)
+    alanları dinamik olarak güncellenir.
     """
 
     spec_path = Path(ingestion_spec_path)
@@ -428,9 +418,35 @@ def load_ingestion_spec(
     ) as f:
         spec = json.load(f)
 
+    # 1. Parquet dosyalarını uris alanına ata
     spec["spec"]["ioConfig"]["inputSource"]["uris"] = list(
         parquet_files
     )
+
+    # 2. Blocklist geohash'lerini filter values alanına ata
+    if blocklist_geohashes is not None:
+        transform_spec = (
+            spec.setdefault("spec", {})
+            .setdefault("dataSchema", {})
+            .setdefault("transformSpec", {})
+        )
+        filter_spec = transform_spec.setdefault(
+            "filter",
+            {
+                "type": "not",
+                "field": {
+                    "type": "in",
+                    "dimension": "geohash",
+                    "values": [],
+                },
+            },
+        )
+        if "field" in filter_spec and isinstance(filter_spec["field"], dict):
+            filter_spec["field"]["values"] = list(blocklist_geohashes)
+            logger.info(
+                "Injected %d blocklisted geohash(es) into Druid ingestion filter",
+                len(blocklist_geohashes),
+            )
 
     return spec
 
@@ -445,10 +461,12 @@ def submit_task(
     username: str,
     password: str,
     ingestion_spec_path: str,
+    blocklist_geohashes: Optional[List[str]] = None,
 ) -> str:
     ingestion_spec = load_ingestion_spec(
         parquet_files=parquet_files,
         ingestion_spec_path=ingestion_spec_path,
+        blocklist_geohashes=blocklist_geohashes,
     )
 
     url = (
@@ -826,6 +844,7 @@ def monitor_task(
 def run_ingestion(
     parquet_files: List[str],
     ingestion_spec_path: str,
+    blocklist_geohashes: Optional[List[str]] = None,
     conn_id: str | None = None,
 ) -> Dict[str, Any]:
 
@@ -855,6 +874,27 @@ def run_ingestion(
         ["dataSchema"]
         ["dataSource"]
     )
+
+    # ========================================================
+    # BLOCKLIST RESOLUTION
+    # ========================================================
+    if blocklist_geohashes is None:
+        try:
+            from citadel.utilities.read_csv import read_blocklist_geohashes
+
+            date_path = extract_date_from_parquet_files(parquet_files)
+            blocklist_geohashes = read_blocklist_geohashes(
+                country=datasource_name,
+                date_str=date_path,
+                conn_id=GCS_CONN_ID,
+            )
+        except Exception as e:
+            logger.warning(
+                "Could not auto-fetch blocklist geohashes for %s: %s",
+                datasource_name,
+                e,
+            )
+            blocklist_geohashes = []
 
 
     # ========================================================
@@ -1022,6 +1062,7 @@ def run_ingestion(
                 username=username,
                 password=password,
                 ingestion_spec_path=ingestion_spec_path,
+                blocklist_geohashes=blocklist_geohashes,
             )
 
             write_state(
@@ -1119,6 +1160,7 @@ def run_ingestion(
         username=username,
         password=password,
         ingestion_spec_path=ingestion_spec_path,
+        blocklist_geohashes=blocklist_geohashes,
     )
 
     # ========================================================

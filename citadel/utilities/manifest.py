@@ -1,7 +1,5 @@
 from typing import Optional
 
-import gcsfs
-
 
 def find_manifest(
     folder_name: str,
@@ -50,6 +48,8 @@ def find_manifest(
     expected_prefix = manifest_prefixes[k_suffix]
 
     folder_name = folder_name.rstrip("/") + "/"
+
+    import gcsfs
 
     fs = gcsfs.GCSFileSystem()
 

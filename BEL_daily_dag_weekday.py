@@ -19,21 +19,29 @@ from citadel.utilities.manifest import find_manifest
 from citadel.notifications.email import EmailNotifier
 from citadel.druid.ingestion import run_ingestion
 
+from config import (
+    GCS_BUCKET_NAME,
+    GCS_CONN_ID,
+    NOTIFICATION_EMAILS,
+    SMTP_CONN_ID,
+    TIMEZONE,
+    get_country_base_path,
+    get_ingestion_spec_path,
+)
+
 # ============================================================
 # BELGIUM TIME
 # ============================================================
 
-local_tz = pendulum.timezone("Europe/Istanbul")
+local_tz = pendulum.timezone(TIMEZONE)
 
 
 # ============================================================
-# GCS will move to config side
+# CONFIG
 # ============================================================
-COUNTRY = "BEL" 
+COUNTRY = "BEL"
 
-GCS_BUCKET_NAME = "arcanor-orion"
-
-GCS_BASE_PATH = f"output/mobility/{COUNTRY}"
+GCS_BASE_PATH = get_country_base_path(COUNTRY)
 
 MANIFEST_PREFIXES = {
     "k3": "irys",
@@ -41,20 +49,11 @@ MANIFEST_PREFIXES = {
 }
 
 failure_email = EmailNotifier(
-    to_email=["obasekin@arcanor.com", "ucelik@arcanor.com"],
+    to_email=NOTIFICATION_EMAILS,
+    conn_id=SMTP_CONN_ID,
 )
 
-AIRFLOW_HOME = os.environ.get("AIRFLOW_HOME", "/opt/airflow")
-
-INGESTION_SPEC = (
-    Path(AIRFLOW_HOME)
-    / "dags"
-    / "repo"
-    / "scripts"
-    / COUNTRY
-    / f"{COUNTRY}_druid_ingestion"
-    / "ingestion_spec.json"
-)
+INGESTION_SPEC = get_ingestion_spec_path(COUNTRY)
 
 # ============================================================
 # DEFAULT ARGS
@@ -134,7 +133,7 @@ def druid_ingestion_workflow():
     ) -> str:
 
         hook = GCSHook(
-            gcp_conn_id="google_cloud_default"
+            gcp_conn_id=GCS_CONN_ID
         )
 
         date_path = target_date_str.replace(
@@ -277,7 +276,7 @@ def druid_ingestion_workflow():
     ) -> list:
 
         hook = GCSHook(
-            gcp_conn_id="google_cloud_default"
+            gcp_conn_id=GCS_CONN_ID
         )
 
         folder_name = manifest_info[
@@ -589,6 +588,7 @@ def druid_ingestion_workflow():
         manifest_infos: list,
         parquet_files: list,
         ingestion_spec_path: str,
+        target_date: str = "",
         **kwargs,
     ) -> dict:
 
@@ -602,12 +602,13 @@ def druid_ingestion_workflow():
             "source_dag_id": kwargs["dag"].dag_id,
             "files": sorted(set(parquet_files)),
             "ingestion_spec_path": ingestion_spec_path,
+            "target_date": target_date,
         }
 
 
     @task
     def collect_parquet_files(manifest_infos: list) -> list:
-        hook = GCSHook(gcp_conn_id="google_cloud_default")
+        hook = GCSHook(gcp_conn_id=GCS_CONN_ID)
         files = []
         for manifest in manifest_infos:
             folder_name = manifest["folder_name"]
@@ -622,8 +623,8 @@ def druid_ingestion_workflow():
                 if object_name.rstrip("/").split("/")[-1].startswith(manifest["file_name"])
                 and object_name.endswith(".parquet")
             )
-        if not files:
-            raise FileNotFoundError("No parquet files found for ingestion request")
+            if not files:
+                raise FileNotFoundError("No parquet files found for ingestion request")
         return sorted(set(files))
 
 
@@ -631,8 +632,9 @@ def druid_ingestion_workflow():
     def daily_ingestion_process(
         offset_days: int,
     ):
+        target_date_task = calculate_folder_date(offset_days=offset_days)
         folder_task = get_todays_expected_folder(
-            target_date_str=calculate_folder_date(offset_days=offset_days),
+            target_date_str=target_date_task,
         )
         manifest_infos = [
             check_manifest_ready.override(
@@ -650,6 +652,7 @@ def druid_ingestion_workflow():
             manifest_infos=manifest_infos,
             parquet_files=parquet_files,
             ingestion_spec_path=str(INGESTION_SPEC),
+            target_date=target_date_task,
         )
         trigger_run_id = (
             "{{ dag.dag_id }}__{{ run_id }}__"

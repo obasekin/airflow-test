@@ -30,7 +30,7 @@ from config import (
 )
 
 # ============================================================
-# TURKEY TIME
+# BELGIUM TIME
 # ============================================================
 
 local_tz = pendulum.timezone(TIMEZONE)
@@ -39,14 +39,12 @@ local_tz = pendulum.timezone(TIMEZONE)
 # ============================================================
 # CONFIG
 # ============================================================
-
-COUNTRY = "TUR"
+COUNTRY = "BELtest"
 
 GCS_BASE_PATH = get_country_base_path(COUNTRY)
 
 MANIFEST_PREFIXES = {
-    "k1": "eskimi",
-    "k2": "location",
+    "k3": "irys",
     "k4": "veraset",
 }
 
