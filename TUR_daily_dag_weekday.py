@@ -804,6 +804,7 @@ def druid_ingestion_workflow():
             email_service.send_email(
                 to=NOTIFICATION_EMAILS,
                 subject=subject_title,
+                cc="kkalle@arcanor.com",
                 html_content=html,
             )
 
