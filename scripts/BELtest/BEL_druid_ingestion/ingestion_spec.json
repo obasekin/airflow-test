@@ -21,7 +21,7 @@
       "maxNumConcurrentSubTasks": 15
     },
     "dataSchema": {
-      "dataSource": "BEL",
+      "dataSource": "BELtest",
       "timestampSpec": {
         "column": "timestamp_local",
         "format": "posix"
