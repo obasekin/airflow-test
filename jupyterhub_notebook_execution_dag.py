@@ -134,7 +134,7 @@ with DAG(
         email_service = EmailService(conn_id=SMTP_CONN_ID)
         email_service.send_email(
             to="obasekin@arcanor.com",
-            cc="omerfarukbasekin@gmail.com"
+            cc="omerfarukbasekin@gmail.com",
             subject="JupyterHub Druid Query Result",
             html_content=html,
         )
