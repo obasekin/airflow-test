@@ -722,7 +722,18 @@ def druid_ingestion_workflow():
 
         def execute_notebook_druid_query(**kwargs) -> dict:
             ti = kwargs["ti"]
-            date_range = ti.xcom_pull(task_ids="format_logical_date")
+            
+            # Bulunduğumuz task grubuna göre format task'ının id'sini bul
+            current_task_id = kwargs["task"].task_id
+            if "execute_notebook_druid_query_before" in current_task_id:
+                format_task_id = current_task_id.replace("execute_notebook_druid_query_before", "format_logical_date")
+            else:
+                format_task_id = current_task_id.replace("execute_notebook_druid_query_after", "format_logical_date")
+                
+            date_range = ti.xcom_pull(task_ids=format_task_id)
+            
+            if not date_range:
+                raise ValueError(f"XCom'dan date_range alınamadı! (Aranan task_id: {format_task_id})")
             
             formatted_query = QUERY.format(
                 start_time=date_range["start_time"],
