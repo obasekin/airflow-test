@@ -715,7 +715,7 @@ def druid_ingestion_workflow():
 
         def format_logical_date(**kwargs) -> dict:
             logical_date = kwargs["logical_date"]
-            start_time = (logical_date - timedelta(days=5)).strftime("%Y-%m-%d 00:00:00")
+            start_time = (logical_date - timedelta(days=6)).strftime("%Y-%m-%d 00:00:00")
             end_time = logical_date.strftime("%Y-%m-%d 00:00:00")
             return {"start_time": start_time, "end_time": end_time}
 
