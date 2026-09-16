@@ -4,6 +4,7 @@ import pendulum
 
 from airflow.decorators import dag, task, task_group
 from airflow.operators.empty import EmptyOperator
+from airflow.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import (
     TriggerDagRunOperator,
 )
@@ -16,8 +17,9 @@ import json
 from pathlib import Path
 
 from citadel.utilities.manifest import find_manifest
-from citadel.notifications.email import EmailNotifier
+from citadel.notifications.email import EmailNotifier, EmailService
 from citadel.druid.ingestion import run_ingestion
+from citadel.jupyter.jupyter_executor import execute_druid_query_in_notebook
 
 from config import (
     GCS_BUCKET_NAME,
@@ -54,6 +56,38 @@ failure_email = EmailNotifier(
 )
 
 INGESTION_SPEC = get_ingestion_spec_path(COUNTRY)
+
+FAIL_ON_NOTEBOOK_ERROR = True
+QUERY = """
+select COUNT(DISTINCT "maid"), "day" from "NLD"
+WHERE __time > TIMESTAMP '{start_time}'
+  AND __time <= TIMESTAMP '{end_time}'
+GROUP BY "day"
+"""
+
+NOTEBOOK_CODE = """
+from pydruid.db import connect
+
+druid_connection = connect(
+    host={host!r},
+    port={port!r},
+    path={path!r},
+    scheme={scheme!r},
+    user={username!r},
+    password={password!r},
+)
+
+druid_cursor = druid_connection.cursor()
+
+query = \"\"\"
+{query}
+\"\"\"
+
+druid_cursor.execute(query)
+result = druid_cursor.fetchall()
+print("Result:", result)
+"""
+
 
 # ============================================================
 # DEFAULT ARGS
@@ -703,7 +737,132 @@ def druid_ingestion_workflow():
             trigger_rule="none_failed_min_one_success",
         )
 
-        folder_task >> manifest_infos >> parquet_files >> request >> trigger >> wait
+        
+        def format_logical_date(**kwargs) -> dict:
+            logical_date = kwargs["logical_date"]
+            start_time = (logical_date - timedelta(days=7)).strftime("%Y-%m-%d 00:00:00")
+            end_time = logical_date.strftime("%Y-%m-%d 00:00:00")
+            return {"start_time": start_time, "end_time": end_time}
+
+        def execute_notebook_druid_query(**kwargs) -> dict:
+            ti = kwargs["ti"]
+            
+            current_task_id = kwargs["task"].task_id
+            if "execute_notebook_druid_query_before" in current_task_id:
+                format_task_id = current_task_id.replace("execute_notebook_druid_query_before", "format_logical_date")
+            else:
+                format_task_id = current_task_id.replace("execute_notebook_druid_query_after", "format_logical_date")
+                
+            date_range = ti.xcom_pull(task_ids=format_task_id)
+            
+            if not date_range:
+                raise ValueError(f"XCom'dan date_range alınamadı! (Aranan task_id: {format_task_id})")
+            
+            formatted_query = QUERY.format(
+                start_time=date_range["start_time"],
+                end_time=date_range["end_time"]
+            )
+            result = execute_druid_query_in_notebook(
+                code=NOTEBOOK_CODE.replace("{query}", formatted_query.strip()),
+                fail_on_execution_error=FAIL_ON_NOTEBOOK_ERROR,
+            )
+            return result
+
+        def _parse_query_result(query_result: dict, title: str) -> str:
+            html = f"<h3>{title}</h3>\n"
+            if not query_result:
+                html += "<p>No outputs returned from notebook (result is empty).</p>"
+                return html
+                
+            notebook_url = query_result.get("notebook_url", "")
+            if notebook_url:
+                html += f'<p><b>Notebook:</b> <a href="{notebook_url}">{notebook_url}</a></p>\n'
+                
+            outputs = query_result.get("outputs", [])
+            if not outputs:
+                html += "<p>No outputs returned from notebook.</p>"
+                return html
+                
+            for item in outputs:
+                if isinstance(item, dict) and item.get("type") == "stream" and "text" in item:
+                    text = item["text"]
+                    
+                    match = re.search(r'Result:\s*\[(.*?)\]', text, re.DOTALL)
+                    if match:
+                        rows_str = match.group(1)
+                        row_matches = re.findall(r'Row\((.*?)\)', rows_str)
+                        if row_matches:
+                            html += "<table border='1' cellpadding='8' cellspacing='0' style='border-collapse: collapse;'>\n"
+                            first_row_items = row_matches[0].split(',')
+                            headers = [i.split('=')[0].strip() for i in first_row_items]
+                            html += "<tr style='background-color: #f2f2f2;'>" + "".join(f"<th>{h}</th>" for h in headers) + "</tr>\n"
+                            
+                            for row_str in row_matches:
+                                html += "<tr>"
+                                items = row_str.split(',')
+                                for i in items:
+                                    val = i.split('=', 1)[1].strip() if '=' in i else ""
+                                    html += f"<td>{val}</td>"
+                                html += "</tr>\n"
+                                
+                            html += "</table>\n<br>\n"
+                    
+                    time_matches = re.findall(r'Time:\s*(.*)', text)
+                    if time_matches:
+                        html += "<h4>Execution Time</h4>\n<ul>\n"
+                        for tm in time_matches:
+                            html += f"<li>{tm}</li>\n"
+                        html += "</ul>\n"
+            return html
+
+        def send_email_report(**kwargs):
+            ti = kwargs["ti"]
+            dag_id = kwargs["dag"].dag_id
+            logical_date_str = kwargs["logical_date"].strftime("%Y-%m-%d")
+            
+            task_id_before = kwargs["task"].task_id.replace("send_email_report", "execute_notebook_druid_query_before")
+            task_id_after = kwargs["task"].task_id.replace("send_email_report", "execute_notebook_druid_query_after")
+            
+            result_before = ti.xcom_pull(task_ids=task_id_before)
+            result_after = ti.xcom_pull(task_ids=task_id_after)
+            
+            subject_title = f"{logical_date_str} {dag_id} {COUNTRY} druid ingestion ended successfully"
+            
+            html = f"<h2>{subject_title}</h2>\n"
+            html += _parse_query_result(result_before, "Before Ingestion")
+            html += "<hr>\n"
+            html += _parse_query_result(result_after, "After Ingestion")
+
+            email_service = EmailService(conn_id=SMTP_CONN_ID)
+            email_service.send_email(
+                to=NOTIFICATION_EMAILS,
+                subject=subject_title,
+                cc="kkalle@arcanor.com",
+                html_content=html,
+            )
+
+        format_date_task = PythonOperator(
+            task_id="format_logical_date",
+            python_callable=format_logical_date,
+        )
+
+        execute_query_task_before = PythonOperator(
+            task_id="execute_notebook_druid_query_before",
+            python_callable=execute_notebook_druid_query,
+        )
+
+        execute_query_task_after = PythonOperator(
+            task_id="execute_notebook_druid_query_after",
+            python_callable=execute_notebook_druid_query,
+        )
+
+        send_email_task = PythonOperator(
+            task_id="send_email_report",
+            python_callable=send_email_report,
+            retries=1,
+        )
+
+        folder_task >> manifest_infos >> parquet_files >> request >> format_date_task >> execute_query_task_before >> trigger >> wait >> execute_query_task_after >> send_email_task
 
 
     # ========================================================
