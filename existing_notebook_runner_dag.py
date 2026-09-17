@@ -25,7 +25,7 @@ def existing_notebook_runner_workflow():
     def run_notebook() -> dict:
         # Notebook dosyasinin JupyterHub ana dizinindeki (ya da ilgili klasordeki) yolu.
         # Ornegin: "analysis/my_daily_analysis.ipynb"
-        notebook_path = "airflow_notebook_example.ipynb"
+        notebook_path = "airflow_notebook_1789579027.ipynb"
         
         # run_existing_notebook fonksiyonunu cagiriyoruz
         result = run_existing_notebook(
