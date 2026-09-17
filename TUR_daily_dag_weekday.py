@@ -66,7 +66,7 @@ failure_email = EmailNotifier(
 INGESTION_SPEC = get_ingestion_spec_path(COUNTRY)
 FAIL_ON_NOTEBOOK_ERROR = True
 QUERY = """
-select COUNT(DISTINCT "maid"), "day" from "TUR"
+select COUNT(DISTINCT "maid"), "day" from "{COUNTRY}"
 WHERE __time > TIMESTAMP '{start_time}'
   AND __time <= TIMESTAMP '{end_time}'
 GROUP BY "day"

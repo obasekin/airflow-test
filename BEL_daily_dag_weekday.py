@@ -1,16 +1,17 @@
 import os
+import re
 
 import pendulum
 
 from airflow.decorators import dag, task, task_group
 from airflow.operators.empty import EmptyOperator
-from airflow.operators.python import PythonOperator
 from airflow.providers.standard.operators.trigger_dagrun import (
     TriggerDagRunOperator,
 )
 from airflow.sensors.external_task import ExternalTaskSensor
 from airflow.sensors.base import PokeReturnValue
 from airflow.providers.google.cloud.hooks.gcs import GCSHook
+from airflow.operators.python import PythonOperator
 
 from datetime import timedelta
 import json
@@ -19,7 +20,12 @@ from pathlib import Path
 from citadel.utilities.manifest import find_manifest
 from citadel.notifications.email import EmailNotifier, EmailService
 from citadel.druid.ingestion import run_ingestion
-from citadel.jupyter.jupyter_executor import execute_druid_query_in_notebook
+from citadel.jupyter.jupyter_executor import (
+    execute_druid_query_in_notebook,
+)
+from config.settings import NOTIFICATION_EMAILS, SMTP_CONN_ID
+
+
 
 from config import (
     GCS_BUCKET_NAME,
@@ -30,6 +36,7 @@ from config import (
     get_country_base_path,
     get_ingestion_spec_path,
 )
+
 
 # ============================================================
 # BELGIUM TIME
@@ -59,7 +66,7 @@ INGESTION_SPEC = get_ingestion_spec_path(COUNTRY)
 
 FAIL_ON_NOTEBOOK_ERROR = True
 QUERY = """
-select COUNT(DISTINCT "maid"), "day" from "BEL"
+select COUNT(DISTINCT "maid"), "day" from "{COUNTRY}"
 WHERE __time > TIMESTAMP '{start_time}'
   AND __time <= TIMESTAMP '{end_time}'
 GROUP BY "day"
