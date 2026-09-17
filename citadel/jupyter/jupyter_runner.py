@@ -83,7 +83,7 @@ def run_existing_notebook(
                 break
                 
     # 4. Save the updated notebook back to JupyterHub
-    saved_info = _save_notebook(notebook_path, notebook, conn_id)
+    saved_info = _save_notebook(notebook_path, notebook_model, conn_id)
     
     result = {
         "status": overall_status,
