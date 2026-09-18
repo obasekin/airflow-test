@@ -767,7 +767,7 @@ def druid_ingestion_workflow():
             
             formatted_query = QUERY.format(
                 start_time=date_range["start_time"],
-                end_time=date_range["end_time"]
+                end_time=date_range["end_time"], COUNTRY=COUNTRY
             )
             result = execute_druid_query_in_notebook(
                 code=NOTEBOOK_CODE.replace("{query}", formatted_query.strip()),
