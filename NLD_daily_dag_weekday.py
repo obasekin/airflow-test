@@ -23,7 +23,7 @@ from citadel.druid.ingestion import run_ingestion
 from citadel.jupyter.jupyter_executor import (
     execute_druid_query_in_notebook,
 )
-from config.settings import NOTIFICATION_EMAILS, SMTP_CONN_ID
+from config.settings import NOTIFICATION_EMAILS, SMTP_CONN_ID, NOTEBOOK_TIMEOUT
 
 
 
@@ -770,7 +770,7 @@ def druid_ingestion_workflow():
             )
             result = execute_druid_query_in_notebook(
                 code=NOTEBOOK_CODE.replace("{query}", formatted_query.strip()),
-                fail_on_execution_error=FAIL_ON_NOTEBOOK_ERROR,
+                fail_on_execution_error=FAIL_ON_NOTEBOOK_ERROR, timeout=NOTEBOOK_TIMEOUT,
             )
             return result
 

@@ -3,6 +3,7 @@ from datetime import timedelta
 
 from airflow.decorators import dag, task
 from citadel.jupyter.jupyter_runner import run_existing_notebook
+from config.settings import NOTEBOOK_TIMEOUT
 
 default_args = {
     "owner": "obasekin",
@@ -30,7 +31,7 @@ def existing_notebook_runner_workflow():
         # run_existing_notebook fonksiyonunu cagiriyoruz
         result = run_existing_notebook(
             notebook_path=notebook_path,
-            timeout=600, # 10 dakika timeout
+            timeout=NOTEBOOK_TIMEOUT, # 10 dakika timeout
             fail_on_execution_error=True
         )
         

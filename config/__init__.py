@@ -7,6 +7,7 @@ from config.settings import (
     GCS_CONN_ID,
     GCS_MOBILITY_BASE_PATH,
     JUPYTERHUB_CONN_ID,
+    NOTEBOOK_TIMEOUT,
     LOG_BUCKET,
     LOG_PREFIX,
     MAX_RETRIES,

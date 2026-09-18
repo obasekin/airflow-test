@@ -72,6 +72,7 @@ MAX_RETRIES: int = int(os.getenv("DRUID_MAX_RETRIES", "3"))
 # JUPYTERHUB SETTINGS
 # ============================================================
 JUPYTERHUB_CONN_ID: str = os.getenv("JUPYTERHUB_CONN_ID", "jupyterhub_default")
+NOTEBOOK_TIMEOUT: int = int(os.getenv("NOTEBOOK_TIMEOUT", "1800"))
 
 # ============================================================
 # NOTIFICATION & EMAIL SETTINGS
