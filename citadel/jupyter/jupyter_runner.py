@@ -1,10 +1,21 @@
+"""
+JupyterHub notebook runner module.
+
+This module provides functionality to execute an existing notebook in JupyterHub
+and save the outputs back to the notebook.
+
+Public Functions:
+    run_existing_notebook(notebook_path, conn_id, timeout, fail_on_execution_error):
+        Executes all code cells in an existing JupyterHub notebook.
+        Params: notebook_path (str), conn_id (str, optional), timeout (int, optional),
+                fail_on_execution_error (bool, optional)
+        Returns: dict[str, Any] with notebook URL, execution status, and outputs.
+"""
 import json
 import logging
 from typing import Any
 
 from citadel.jupyter.jupyter_executor import (
-    DEFAULT_CONN_ID,
-    DEFAULT_TIMEOUT,
     _session,
     _select_kernel,
     _execute_in_kernel,
@@ -12,6 +23,10 @@ from citadel.jupyter.jupyter_executor import (
     _as_notebook_output,
     get_jupyterhub_config,
 )
+from citadel.config_loader import config
+
+DEFAULT_CONN_ID = config.jupyter.get('conn_id', 'jupyterhub_default')
+DEFAULT_TIMEOUT = config.jupyter.get('timeout', 1800)
 
 logger = logging.getLogger(__name__)
 

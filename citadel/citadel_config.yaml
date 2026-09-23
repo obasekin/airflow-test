@@ -1,0 +1,47 @@
+# ============================================================
+# CITADEL — Merkezi Servis Konfigürasyonu
+# ============================================================
+# Bu dosyayı düzenleyerek tüm citadel servislerinin
+# default ayarlarını değiştirebilirsiniz.
+# Airflow Connection'lar (conn_id) bu dosyadan okunur,
+# credential'lar ise Airflow UI'dan yönetilir.
+# ============================================================
+
+# --- Druid Servisi (citadel.druid) ---
+druid:
+  conn_id: "druid_default"
+  poll_interval: 60
+  max_retries: 3
+  submit_timeout: 60
+  status_timeout: 30
+
+# --- JupyterHub Servisi (citadel.jupyter) ---
+jupyter:
+  conn_id: "jupyterhub_default"
+  timeout: 1800
+  default_kernel: "python3"
+
+# --- Email Servisi (citadel.notifications) ---
+notifications:
+  smtp_conn_id: "smtp_default"
+  default_to:
+    - "obasekin@arcanor.com"
+    - "ucelik@arcanor.com"
+
+# --- GCS Ayarları (citadel.utilities + citadel.druid) ---
+gcs:
+  conn_id: "google_cloud_default"
+  bucket_name: "arcanor-orion"
+  mobility_base_path: "output/mobility"
+  blocklist_base_path: "control/druid/ingestion/blocklist/geohash"
+  blocklist_filename: "ignore.csv"
+
+# --- Logging ---
+logging:
+  log_bucket: "arcanor-airflow-logs"
+  log_prefix: "logs/ingestion"
+
+# --- Genel ---
+general:
+  airflow_home: "/opt/airflow"
+  timezone: "Europe/Istanbul"

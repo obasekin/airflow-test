@@ -1,9 +1,15 @@
+"""
+CSV reading utilities module.
+
+This module provides functions to read and parse CSV files, specifically for
+extracting geohashes from GCS files and processing blocklists.
+"""
 import csv
 import io
 import logging
 from typing import List, Optional
 
-from config import GCS_BUCKET_NAME, GCS_CONN_ID, get_blocklist_candidates
+from citadel.config_loader import config, get_blocklist_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +82,7 @@ def read_csv_from_gcs(
     Downloads text content of a file from GCS.
     Uses Airflow's GCSHook when available, falls back to gcsfs if needed.
     """
-    actual_conn_id = conn_id or GCS_CONN_ID
+    actual_conn_id = conn_id or config.gcs.get('conn_id', 'google_cloud_default')
 
     # 1. Try Airflow GCSHook
     try:
@@ -146,8 +152,8 @@ def read_blocklist_geohashes(
     Checks date candidates (e.g. 2026/9/10 vs 2026/09/10).
     Returns a list of geohashes. If no blocklist file exists, returns [].
     """
-    actual_bucket = bucket_name or GCS_BUCKET_NAME
-    actual_conn_id = conn_id or GCS_CONN_ID
+    actual_bucket = bucket_name or config.gcs.get('bucket_name', 'arcanor-orion')
+    actual_conn_id = conn_id or config.gcs.get('conn_id', 'google_cloud_default')
 
     candidates = get_blocklist_candidates(country=country, date_str=date_str)
 

@@ -1,3 +1,9 @@
+"""
+Manifest utilities module.
+
+This module provides functionality to find manifest files in Google Cloud Storage
+based on predefined prefix mappings.
+"""
 from typing import Optional
 
 

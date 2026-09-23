@@ -1,0 +1,43 @@
+# ============================================================
+# BEL — Ülke Konfigürasyonu
+# ============================================================
+# Bu dosya BEL DAG'ının tüm davranışını kontrol eder.
+# Yeni ülke eklemek için: scripts/<ULKE>/country_config.yaml kopyalayın.
+# ============================================================
+
+country: "BEL"
+schedule: "0 8 * * *"
+start_date: "2026-08-18"
+
+run_days:
+  0: [5]       # Pazartesi
+  1: [5]       # Salı
+  2: [5]       # Çarşamba
+  3: [5]       # Perşembe
+  4: [5]       # Cuma
+  5: [5]       # Cumartesi
+
+manifest_prefixes:
+  k3: "irys"
+  k4: "veraset"
+
+notification_emails:
+  - "obasekin@arcanor.com"
+  - "ucelik@arcanor.com"
+email_cc: "kkalle@arcanor.com"
+
+features:
+  druid_query_before: true
+  druid_query_after: true
+  send_email_report: true
+
+druid_query: |
+  SELECT COUNT(DISTINCT "maid"), "day" FROM "{country}"
+  WHERE __time > TIMESTAMP '{start_time}'
+    AND __time <= TIMESTAMP '{end_time}'
+  GROUP BY "day"
+druid_query_offset_days: 7
+
+owner: "obasekin"
+retries: 3
+retry_delay_minutes: 5

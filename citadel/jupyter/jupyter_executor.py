@@ -1,3 +1,28 @@
+"""
+JupyterHub notebook execution module.
+
+This module provides functionality to execute Python code in JupyterHub notebooks
+programmatically. It handles kernel management, WebSocket communication, and
+notebook result saving.
+
+Public Functions:
+    check_jupyterhub_connection(conn_id):
+        Verifies that the configured JupyterHub API can be reached.
+        Params: conn_id (str, optional)
+        Returns: dict[str, Any] with connection status and payload.
+
+    execute_notebook_code(code, conn_id, notebook_name, timeout, fail_on_execution_error):
+        Executes raw Python code in a new JupyterHub notebook.
+        Params: code (str), conn_id (str, optional), notebook_name (str, optional),
+                timeout (int, optional), fail_on_execution_error (bool, optional)
+        Returns: dict[str, Any] with notebook URL, execution status, and outputs.
+
+    execute_druid_query_in_notebook(code, jupyter_conn_id, druid_conn_id, timeout, fail_on_execution_error):
+        Executes a parameterized Druid query inside a JupyterHub notebook.
+        Params: code (str), jupyter_conn_id (str, optional), druid_conn_id (str, optional),
+                timeout (int, optional), fail_on_execution_error (bool, optional)
+        Returns: dict[str, Any] with connection check, notebook URL, status, and outputs.
+"""
 import json
 import logging
 import ssl
@@ -10,13 +35,12 @@ import requests
 import websocket
 
 from citadel.druid.credentials import get_druid_credentials
-from citadel.jupyter.credentials import (
-    DEFAULT_CONN_ID,
-    get_jupyterhub_config,
-)
+from citadel.jupyter.credentials import get_jupyterhub_config
+from citadel.config_loader import config
 
-DEFAULT_DRUID_CONN_ID = "druid_default"
-DEFAULT_TIMEOUT = 60
+DEFAULT_CONN_ID = config.jupyter.get('conn_id', 'jupyterhub_default')
+DEFAULT_DRUID_CONN_ID = config.druid.get('conn_id', 'druid_default')
+DEFAULT_TIMEOUT = config.jupyter.get('timeout', 1800)
 
 
 def _session(conn_id: str) -> requests.Session:

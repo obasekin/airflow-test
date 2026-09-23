@@ -1,11 +1,18 @@
+"""
+JupyterHub credentials management module.
+
+This module provides functionality to load JupyterHub connection credentials and
+Cloudflare headers from an Airflow connection or environment variables.
+"""
 import logging
 import os
 from typing import Any
 
 from airflow.hooks.base import BaseHook
+from citadel.config_loader import config
 
 
-DEFAULT_CONN_ID = "jupyterhub_default"
+DEFAULT_CONN_ID = config.jupyter.get('conn_id', 'jupyterhub_default')
 
 
 def _read_extra_value(extra: dict[str, Any], *keys: str) -> str:

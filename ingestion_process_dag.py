@@ -1,15 +1,22 @@
+"""
+Ingestion Process DAG.
+
+This DAG coordinates the Druid ingestion workflow for parquet data files,
+fetching blocklist geohashes and executing idempotent Druid ingestion tasks.
+"""
+
 from datetime import timedelta
 
 import pendulum
 from airflow.decorators import dag, task
 
+from citadel.config_loader import config
 from citadel.druid.ingestion import run_ingestion
 from citadel.notifications.email import EmailNotifier
-from config import NOTIFICATION_EMAILS, SMTP_CONN_ID
 
 failure_email = EmailNotifier(
-    to_email=NOTIFICATION_EMAILS,
-    conn_id=SMTP_CONN_ID,
+    to_email=config.notifications["default_to"],
+    conn_id=config.notifications["smtp_conn_id"],
 )
 
 default_args = {
@@ -81,12 +88,11 @@ def ingestion_process_workflow():
             return []
 
         from citadel.utilities.read_csv import read_blocklist_geohashes
-        from config import GCS_CONN_ID
-
+ 
         return read_blocklist_geohashes(
             country=country,
             date_str=target_date,
-            conn_id=GCS_CONN_ID,
+            conn_id=config.gcs["conn_id"],
         )
 
     @task(execution_timeout=timedelta(hours=2), retries=3)
