@@ -41,6 +41,16 @@ logging:
   log_bucket: "arcanor-airflow-logs"
   log_prefix: "logs/ingestion"
 
+# --- Ingestion (ingestion_process_dag) ---
+# Hangi ülkeler ingestion yapabilir?
+# Yeni ülke eklerken buraya da eklemeyi unutmayın.
+ingestion:
+  allowed_countries:
+    - "TUR"
+    - "TURv2"
+    - "BEL"
+    - "NLD"
+
 # --- Genel ---
 general:
   airflow_home: "/opt/airflow"

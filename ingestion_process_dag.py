@@ -56,9 +56,11 @@ def ingestion_process_workflow():
         files = conf.get("files")
         ingestion_spec_path = conf.get("ingestion_spec_path")
 
-        if country not in ("BEL", "NLD", "TURv2", "TUR"):
+        allowed_countries = config.ingestion.get("allowed_countries", [])
+        if country not in allowed_countries:
             raise ValueError(
-                "country must be BEL, NLD, TURv2, TUR or BELtest"
+                f"country '{country}' is not in allowed_countries: {allowed_countries}. "
+                f"Add it to citadel_config.yaml -> ingestion -> allowed_countries"
             )
 
         if not isinstance(files, list) or not files:

@@ -84,6 +84,11 @@ class CitadelConfig:
         """General configuration."""
         return self._config_data.get("general", {})
 
+    @property
+    def ingestion(self) -> dict:
+        """Ingestion process configuration (allowed_countries, etc.)."""
+        return self._config_data.get("ingestion", {})
+
 
 # Singleton instance
 config = CitadelConfig()
