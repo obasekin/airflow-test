@@ -399,7 +399,6 @@ def create_country_dag(yaml_config: dict):
         # Branching Logic
         start_task = EmptyOperator(task_id="start")
         end_task = EmptyOperator(task_id="end", trigger_rule="none_failed_min_one_success")
-        skip_task = EmptyOperator(task_id="skip_day")
 
         # Create TaskGroups for all unique offsets statically
         all_offsets = set()
@@ -410,7 +409,6 @@ def create_country_dag(yaml_config: dict):
         for offset in all_offsets:
             group = ingestion_pipeline_for_offset.override(group_id=f"process_offset_{offset}")(offset_days=offset)
             offset_groups[offset] = group
-            group >> end_task
 
         @task.branch(task_id="branch_by_day")
         def branch_by_day(**kwargs):
@@ -419,12 +417,16 @@ def create_country_dag(yaml_config: dict):
                 offsets = run_days[weekday]
                 if offsets:
                     return [f"process_offset_{offset}.calculate_folder_date" for offset in offsets]
-            return "skip_day"
+            return []
 
         branch_task = branch_by_day()
 
         start_task >> branch_task
-        branch_task >> skip_task >> end_task
+        if offset_groups:
+            for group in offset_groups.values():
+                branch_task >> group >> end_task
+        else:
+            branch_task >> end_task
         
     return generated_dag()
 
