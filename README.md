@@ -376,3 +376,4 @@ Citadel servislerinin çalışması için Airflow Admin -> Connections ekranınd
 | `jupyterhub_default` | HTTP | JupyterHub Host, Extra JSON içine `{"api_token": "...", "cf_access_client_id": "...", "cf_access_client_secret": "..."}` |
 | `smtp_default` | Email / SMTP | SMTP Host, Port, Kullanıcı adı ve Şifresi |
 | `google_cloud_default` | Google Cloud | GCS erişim Service Account Key veya Workload Identity |
+
