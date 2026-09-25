@@ -73,6 +73,24 @@ def ingestion_process_workflow():
                 "ingestion_spec_path is required"
             )
 
+        # 4-way consistency check:
+        # 1. Flow country
+        # 2. Spec directory structure (scripts/<country>/<country>_druid_ingestion/ingestion_spec.json)
+        # 3. Data origin (parquet file paths contain /<country>/)
+        # 4. Data destination (Druid dataSource in spec equals country)
+        import json
+        from citadel.druid.spec_loader import IngestionSpecLoader
+
+        with open(ingestion_spec_path, "r", encoding="utf-8") as f:
+            spec = json.load(f)
+
+        IngestionSpecLoader.validate_consistency(
+            country=country,
+            ingestion_spec_path=ingestion_spec_path,
+            parquet_files=files,
+            spec=spec,
+        )
+
         return conf
 
     @task(execution_timeout=timedelta(minutes=15), retries=3)
@@ -107,6 +125,7 @@ def ingestion_process_workflow():
             parquet_files=request["files"],
             ingestion_spec_path=request["ingestion_spec_path"],
             blocklist_geohashes=blocklist_geohashes,
+            country=request.get("country"),
         )
 
     request = read_request()

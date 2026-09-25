@@ -140,11 +140,13 @@ class DruidIngestionService:
         password: str,
         ingestion_spec_path: str,
         blocklist_geohashes: Optional[List[str]] = None,
+        country: Optional[str] = None,
     ) -> str:
         ingestion_spec = self.spec_loader.load(
             parquet_files=parquet_files,
             ingestion_spec_path=ingestion_spec_path,
             blocklist_geohashes=blocklist_geohashes,
+            country=country,
         )
         url = f"{druid_url}/druid/indexer/v1/task"
         logger.info("Submitting Druid ingestion task")
@@ -269,9 +271,10 @@ class DruidIngestionService:
         parquet_files: List[str],
         ingestion_spec_path: str,
         blocklist_geohashes: Optional[List[str]] = None,
+        country: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
-        Executes the Druid ingestion workflow.
+        Executes the Druid ingestion workflow with 4-way consistency verification.
         """
         if not parquet_files:
             raise ValueError("parquet_files cannot be empty")
@@ -283,6 +286,15 @@ class DruidIngestionService:
         with open(ingestion_spec_path, "r", encoding="utf-8") as f:
             original_spec = json.load(f)
         datasource_name = original_spec["spec"]["dataSchema"]["dataSource"]
+
+        # 4-way consistency check (flow country, spec folder, input parquet paths, Druid dataSource)
+        effective_country = country or datasource_name
+        self.spec_loader.validate_consistency(
+            country=effective_country,
+            ingestion_spec_path=ingestion_spec_path,
+            parquet_files=parquet_files,
+            spec=original_spec,
+        )
 
         if blocklist_geohashes is None:
             try:
@@ -408,6 +420,7 @@ class DruidIngestionService:
             password=password,
             ingestion_spec_path=ingestion_spec_path,
             blocklist_geohashes=blocklist_geohashes,
+            country=effective_country,
         )
         self.state_manager.write_state(
             object_name=state_object,
@@ -438,6 +451,7 @@ def run_ingestion(
     ingestion_spec_path: str,
     blocklist_geohashes: Optional[List[str]] = None,
     conn_id: Optional[str] = None,
+    country: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Backward-compatible wrapper. Use DruidIngestionService directly for more control.
@@ -447,6 +461,7 @@ def run_ingestion(
         ingestion_spec_path: Path to the ingestion specification JSON.
         blocklist_geohashes: Optional list of geohashes to filter out.
         conn_id: Connection ID for Druid.
+        country: Optional country string for 4-way consistency validation.
 
     Returns:
         A dictionary with the task execution status and metadata.
@@ -456,4 +471,5 @@ def run_ingestion(
         parquet_files=parquet_files,
         ingestion_spec_path=ingestion_spec_path,
         blocklist_geohashes=blocklist_geohashes,
+        country=country,
     )
