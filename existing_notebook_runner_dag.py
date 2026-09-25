@@ -1,9 +1,17 @@
-import pendulum
+"""
+Existing Jupyter Notebook Runner DAG.
+
+This DAG demonstrates executing an existing Jupyter notebook on JupyterHub
+and capturing its execution results and outputs.
+"""
+
 from datetime import timedelta
 
+import pendulum
 from airflow.decorators import dag, task
+
+from citadel.config_loader import config
 from citadel.jupyter.jupyter_runner import run_existing_notebook
-from config.settings import NOTEBOOK_TIMEOUT
 
 default_args = {
     "owner": "obasekin",
@@ -31,7 +39,7 @@ def existing_notebook_runner_workflow():
         # run_existing_notebook fonksiyonunu cagiriyoruz
         result = run_existing_notebook(
             notebook_path=notebook_path,
-            timeout=NOTEBOOK_TIMEOUT, # 10 dakika timeout
+            timeout=config.jupyter["timeout"],  # 10 dakika timeout
             fail_on_execution_error=True
         )
         

@@ -1,3 +1,14 @@
+"""
+Email notification module.
+
+This module provides functionality to send generic HTML emails using an Airflow
+SMTP connection. It includes a service class for sending emails directly and a
+notifier class for use with Airflow's BaseNotifier.
+
+Classes:
+    EmailService: Service class to send HTML emails.
+    EmailNotifier: Airflow BaseNotifier implementation to send HTML emails on task completion/failure.
+"""
 from __future__ import annotations
 
 import smtplib
@@ -9,12 +20,14 @@ from email.mime.text import MIMEText
 from email.utils import formatdate
 
 from airflow.sdk import BaseHook, BaseNotifier, Context
+from citadel.config_loader import config
 
+DEFAULT_CONN_ID = config.notifications.get('email_conn_id', 'smtp_default')
 
 class EmailService:
     """Send generic HTML emails using an Airflow SMTP connection."""
 
-    def __init__(self, conn_id: str = "smtp_default"):
+    def __init__(self, conn_id: str = DEFAULT_CONN_ID):
         self.conn_id = conn_id
 
     def send_email(
@@ -132,7 +145,7 @@ def send_email(
     subject: str,
     html_content: str,
     cc: str | Iterable[str] | None = None,
-    conn_id: str = "smtp_default",
+    conn_id: str = DEFAULT_CONN_ID,
 ) -> None:
     """Send a generic HTML email from any task or Python code."""
     EmailService(conn_id=conn_id).send_email(
@@ -157,7 +170,7 @@ class EmailNotifier(BaseNotifier):
         to_email: str | Iterable[str] | None = None,
         subject: str | None = None,
         html_content: str | None = None,
-        conn_id: str = "smtp_default",
+        conn_id: str = DEFAULT_CONN_ID,
     ):
         super().__init__()
 

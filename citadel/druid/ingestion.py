@@ -1,1201 +1,459 @@
-import hashlib
+"""
+Facade service for managing Druid data ingestion tasks.
+
+This module provides the DruidIngestionService class which handles the complete lifecycle
+of a Druid ingestion task: managing state, resolving blocklists, and polling for task completion.
+
+Example usage:
+    service = DruidIngestionService(conn_id="druid_default", poll_interval=30)
+    result = service.run(
+        parquet_files=["gs://bucket/file.parquet"],
+        ingestion_spec_path="/path/to/spec.json"
+    )
+
+Alternatively, use the convenience function:
+    result = run_ingestion(
+        parquet_files=["gs://bucket/file.parquet"],
+        ingestion_spec_path="/path/to/spec.json",
+        conn_id="druid_default"
+    )
+"""
+
 import json
 import logging
 import time
-from datetime import datetime
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import requests
-from airflow.providers.google.cloud.hooks.gcs import GCSHook
 
+from citadel.config_loader import config
 from citadel.druid.credentials import get_druid_credentials
-
-
-from config import (
-    GCS_CONN_ID,
-    LOG_BUCKET,
-    LOG_PREFIX,
-    MAX_RETRIES,
-    POLL_INTERVAL,
-)
+from citadel.druid.state_manager import IngestionStateManager
+from citadel.druid.spec_loader import IngestionSpecLoader
 
 logger = logging.getLogger(__name__)
 
-
-
-# ============================================================
-# TIME
-# ============================================================
-
-def now():
-    return datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-
-# ============================================================
-# GCS
-# ============================================================
-
-def get_gcs_hook():
-    return GCSHook(
-        gcp_conn_id=GCS_CONN_ID
-    )
-
-
-# ============================================================
-# INGESTION KEY
-# ============================================================
-
-def calculate_ingestion_key(
-    datasource_name: str,
-    parquet_files: List[str],
-) -> str:
+class DruidIngestionService:
     """
-    Aynı datasource + aynı parquet file listesi
-    aynı ingestion key'i üretir.
-
-    File sırası önemli değildir.
+    Facade class managing the execution and monitoring of Druid ingestion tasks.
     """
 
-    sorted_files = sorted(parquet_files)
-
-    payload = (
-        f"datasource={datasource_name}\n"
-        f"files=\n"
-        + "\n".join(sorted_files)
-    )
-
-    return hashlib.sha256(
-        payload.encode("utf-8")
-    ).hexdigest()
-
-
-# ============================================================
-# INPUT FOLDER / DATE
-# ============================================================
-
-def extract_date_from_parquet_files(
-    parquet_files: List[str],
-) -> str:
-    """
-    Örnek:
-
-    gs://arcanor-orion/output/mobility/TUR/2026/08/15/xxx.parquet
-
-    Return:
-
-    2026/08/15
-    """
-
-    for parquet_file in parquet_files:
-
-        path = (
-            parquet_file
-            .replace("gs://", "", 1)
-            .split("/")
-        )
-
-        for i in range(len(path) - 2):
-
-            year = path[i]
-            month = path[i + 1]
-            day = path[i + 2]
-
-            if (
-                len(year) == 4
-                and len(month) == 2
-                and len(day) == 2
-                and year.isdigit()
-                and month.isdigit()
-                and day.isdigit()
-            ):
-                return (
-                    f"{year}/"
-                    f"{month}/"
-                    f"{day}"
-                )
-
-    raise ValueError(
-        "Could not extract date from parquet files"
-    )
-
-
-# ============================================================
-# STATE PATH
-# ============================================================
-
-def get_state_object_name(
-    datasource_name: str,
-    parquet_files: List[str],
-    ingestion_key: str,
-) -> str:
-
-    date_path = (
-        extract_date_from_parquet_files(
-            parquet_files
-        )
-    )
-
-    return (
-        f"{LOG_PREFIX}/"
-        f"{datasource_name}/"
-        f"{date_path}/"
-        f"{ingestion_key}/"
-        f"state.json"
-    )
-
-
-# ============================================================
-# READ STATE
-# ============================================================
-
-def read_state(
-    object_name: str,
-) -> Optional[Dict[str, Any]]:
-
-    hook = get_gcs_hook()
-
-    if not hook.exists(
-        bucket_name=LOG_BUCKET,
-        object_name=object_name,
+    def __init__(
+        self,
+        conn_id: Optional[str] = None,
+        poll_interval: Optional[int] = None,
+        max_retries: Optional[int] = None,
+        gcs_conn_id: Optional[str] = None,
+        log_bucket: Optional[str] = None,
+        log_prefix: Optional[str] = None,
     ):
-        return None
+        self.conn_id = conn_id
+        self.poll_interval = poll_interval if poll_interval is not None else config.druid.get('poll_interval', 60)
+        self.max_retries = max_retries if max_retries is not None else config.druid.get('max_retries', 3)
+        self.gcs_conn_id = gcs_conn_id if gcs_conn_id is not None else config.gcs.get('conn_id', 'google_cloud_default')
+        self.log_bucket = log_bucket if log_bucket is not None else config.logging.get('log_bucket', 'default-bucket')
+        self.log_prefix = log_prefix if log_prefix is not None else config.logging.get('log_prefix', 'logs')
 
-    data = hook.download(
-        bucket_name=LOG_BUCKET,
-        object_name=object_name,
-    )
-
-    return json.loads(
-        data.decode("utf-8")
-    )
-
-
-# ============================================================
-# WRITE STATE
-# ============================================================
-
-def write_state(
-    object_name: str,
-    ingestion_key: str,
-    datasource_name: str,
-    parquet_files: List[str],
-    task_id: str,
-    status: str,
-    retry_count: int,
-):
-    """
-    State yalnızca önemli state değişikliklerinde yazılır.
-
-    Her polling'de state yazılmaz.
-    """
-
-    state = {
-        "ingestion_key": ingestion_key,
-        "datasource": datasource_name,
-        "file_count": len(parquet_files),
-        "files": sorted(parquet_files),
-        "task_id": task_id,
-        "status": status,
-        "retry_count": retry_count,
-        "created_at": now(),
-    }
-
-    hook = get_gcs_hook()
-
-    hook.upload(
-        bucket_name=LOG_BUCKET,
-        object_name=object_name,
-        data=json.dumps(
-            state,
-            indent=2,
-            ensure_ascii=False,
-        ),
-        mime_type="application/json",
-    )
-
-    logger.info(
-        "State written: gs://%s/%s",
-        LOG_BUCKET,
-        object_name,
-    )
-
-
-# ============================================================
-# DRUID TASK STATUS
-# ============================================================
-
-def get_task_status(
-    task_id: str,
-    druid_url: str,
-    username: str,
-    password: str,
-) -> str:
-
-    url = (
-        f"{druid_url}"
-        f"/druid/indexer/v1/task/"
-        f"{task_id}/status"
-    )
-
-    try:
-
-        response = requests.get(
-            url,
-            auth=(username, password),
-            timeout=30,
+        self.state_manager = IngestionStateManager(
+            gcs_conn_id=self.gcs_conn_id,
+            log_bucket=self.log_bucket,
+            log_prefix=self.log_prefix,
         )
+        self.spec_loader = IngestionSpecLoader()
 
-        if response.status_code == 200:
+    def _get_task_status(
+        self, task_id: str, druid_url: str, username: str, password: str
+    ) -> str:
+        url = f"{druid_url}/druid/indexer/v1/task/{task_id}/status"
+        try:
+            response = requests.get(url, auth=(username, password), timeout=30)
+            if response.status_code == 200:
+                data = response.json()
+                return data.get("status", {}).get("status", "UNKNOWN")
+            if response.status_code == 404:
+                return "NOT_FOUND"
+            logger.warning("Task status failed: %s %s", response.status_code, response.text)
+            return "UNKNOWN"
+        except requests.RequestException as exc:
+            logger.warning("Druid status request error: %s", exc)
+            return "UNKNOWN"
 
-            data = response.json()
-
-            return (
-                data
-                .get("status", {})
-                .get("status")
-            )
-
-        if response.status_code == 404:
-
-            return "NOT_FOUND"
-
-        logger.warning(
-            "Task status failed: %s %s",
-            response.status_code,
-            response.text,
-        )
-
-        return "UNKNOWN"
-
-    except requests.RequestException as exc:
-
-        logger.warning(
-            "Druid status request error: %s",
-            exc,
-        )
-
-        return "UNKNOWN"
-
-
-# ============================================================
-# GET DRUID TASK LIST
-# ============================================================
-
-def get_task_list(
-    endpoint: str,
-    druid_url: str,
-    username: str,
-    password: str,
-) -> Optional[List[Dict[str, Any]]]:
-
-    url = (
-        f"{druid_url}"
-        f"/druid/indexer/v1/{endpoint}"
-    )
-
-    try:
-
-        response = requests.get(
-            url,
-            auth=(username, password),
-            timeout=30,
-        )
-
-        response.raise_for_status()
-
-        return response.json()
-
-    except requests.RequestException as exc:
-
-        logger.warning(
-            "%s request failed: %s",
-            endpoint,
-            exc,
-        )
-
-        return None
-
-
-# ============================================================
-# FIND ANY ACTIVE INDEX PARALLEL
-# ============================================================
-
-def find_active_ingestion(
-    druid_url: str,
-    username: str,
-    password: str,
-) -> Optional[Dict[str, Any]]:
-    """
-    Druid'de herhangi bir aktif index_parallel
-    ingestion task'ı var mı kontrol eder.
-
-    Datasource önemli değildir.
-
-    Örnek:
-
-        TUR       index_parallel
-        NLD       index_parallel
-        TURtest   index_parallel
-
-    herhangi biri aktifse yeni ingestion bekler.
-
-    compact ve diğer task tipleri dikkate alınmaz.
-
-    Return:
-
-        Dict  -> aktif ingestion bulundu
-        False -> aktif ingestion yok
-        None  -> Druid kontrolü başarısız
-    """
-
-    for endpoint in (
-        "runningTasks",
-        "pendingTasks",
-        "waitingTasks",
-    ):
-
-        tasks = get_task_list(
-            endpoint=endpoint,
-            druid_url=druid_url,
-            username=username,
-            password=password,
-        )
-
-        if tasks is None:
+    def _get_task_list(
+        self, endpoint: str, druid_url: str, username: str, password: str
+    ) -> Optional[List[Dict[str, Any]]]:
+        url = f"{druid_url}/druid/indexer/v1/{endpoint}"
+        try:
+            response = requests.get(url, auth=(username, password), timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            logger.warning("%s request failed: %s", endpoint, exc)
             return None
 
-        for task in tasks:
-
-            if task.get("type") != "index_parallel":
-                continue
-
-            logger.info(
-                "Active Druid ingestion found: "
-                "id=%s datasource=%s status=%s",
-                task.get("id"),
-                task.get("dataSource"),
-                task.get("status"),
-            )
-
-            return task
-
-    return False
-
-
-# ============================================================
-# LOAD SPEC
-# ============================================================
-
-def load_ingestion_spec(
-    parquet_files: list[str],
-    ingestion_spec_path: str,
-    blocklist_geohashes: Optional[List[str]] = None,
-) -> dict[str, Any]:
-    """
-    ingestion_spec.json okunur.
-
-    Original dosya değiştirilmez.
-
-    Sadece memory'deki spec'in:
-        - spec.ioConfig.inputSource.uris
-        - spec.dataSchema.transformSpec.filter.field.values (blocklist_geohashes)
-    alanları dinamik olarak güncellenir.
-    """
-
-    spec_path = Path(ingestion_spec_path)
-
-    if not spec_path.exists():
-        raise FileNotFoundError(
-            f"Ingestion spec not found: {spec_path}"
-        )
-
-    with spec_path.open(
-        "r",
-        encoding="utf-8",
-    ) as f:
-        spec = json.load(f)
-
-    # 1. Parquet dosyalarını uris alanına ata
-    spec["spec"]["ioConfig"]["inputSource"]["uris"] = list(
-        parquet_files
-    )
-
-    # 2. Blocklist geohash'lerini filter values alanına ata
-    if blocklist_geohashes is not None:
-        transform_spec = (
-            spec.setdefault("spec", {})
-            .setdefault("dataSchema", {})
-            .setdefault("transformSpec", {})
-        )
-        filter_spec = transform_spec.setdefault(
-            "filter",
-            {
-                "type": "not",
-                "field": {
-                    "type": "in",
-                    "dimension": "geohash",
-                    "values": [],
-                },
-            },
-        )
-        if "field" in filter_spec and isinstance(filter_spec["field"], dict):
-            filter_spec["field"]["values"] = list(blocklist_geohashes)
-            logger.info(
-                "Injected %d blocklisted geohash(es) into Druid ingestion filter",
-                len(blocklist_geohashes),
-            )
-
-    return spec
-
-
-# ============================================================
-# SUBMIT
-# ============================================================
-
-def submit_task(
-    parquet_files: List[str],
-    druid_url: str,
-    username: str,
-    password: str,
-    ingestion_spec_path: str,
-    blocklist_geohashes: Optional[List[str]] = None,
-) -> str:
-    ingestion_spec = load_ingestion_spec(
-        parquet_files=parquet_files,
-        ingestion_spec_path=ingestion_spec_path,
-        blocklist_geohashes=blocklist_geohashes,
-    )
-
-    url = (
-        f"{druid_url}"
-        f"/druid/indexer/v1/task"
-    )
-
-    logger.info(
-        "Submitting Druid ingestion task"
-    )
-
-    response = requests.post(
-        url,
-        auth=(username, password),
-        headers={
-            "Content-Type": "application/json"
-        },
-        json=ingestion_spec,
-        timeout=60,
-    )
-
-    logger.info(
-        "Druid submit response: %s %s",
-        response.status_code,
-        response.text,
-    )
-
-    response.raise_for_status()
-
-    task_id = response.json()["task"]
-
-    logger.info(
-        "Druid task created: %s",
-        task_id,
-    )
-
-    return task_id
-
-
-# ============================================================
-# WAIT FOR GLOBAL DRUID INGESTION SLOT
-# ============================================================
-
-def wait_for_druid_ingestion_slot(
-    druid_url: str,
-    username: str,
-    password: str,
-):
-    """
-    Druid'de herhangi bir index_parallel çalışıyorsa
-    yeni ingestion başlatılmaz.
-
-    Her 1 dakikada bir tekrar kontrol edilir.
-
-    Örnek:
-
-        10:00 -> NLD RUNNING
-        10:01 -> NLD RUNNING
-        10:02 -> NLD RUNNING
-        ...
-        11:17 -> NLD SUCCESS
-        11:18 -> yeni ingestion submit
-
-    Yani sadece 1 kere 1 dakika beklemiyor.
-
-    Aktif ingestion bitene kadar sürekli bekliyor.
-    """
-
-    while True:
-
-        active_task = find_active_ingestion(
-            druid_url=druid_url,
-            username=username,
-            password=password,
-        )
-
-        # ----------------------------------------------------
-        # Druid kontrolü başarısız
-        # ----------------------------------------------------
-
-        if active_task is None:
-
-            logger.warning(
-                "Unable to determine active Druid tasks. "
-                "Retrying in %s seconds.",
-                POLL_INTERVAL,
-            )
-
-            time.sleep(
-                POLL_INTERVAL
-            )
-
-            continue
-
-        # ----------------------------------------------------
-        # SLOT BOŞ
-        # ----------------------------------------------------
-
-        if not active_task:
-
-            logger.info(
-                "No active Druid ingestion found."
-            )
-
-            return
-
-        # ----------------------------------------------------
-        # SLOT DOLU
-        # ----------------------------------------------------
-
-        logger.info(
-            "Druid ingestion slot is busy. "
-            "Task=%s datasource=%s. "
-            "Next check in %s seconds.",
-            active_task.get("id"),
-            active_task.get("dataSource"),
-            POLL_INTERVAL,
-        )
-
-        time.sleep(
-            POLL_INTERVAL
-        )
-
-
-# ============================================================
-# MONITOR OUR TASK
-# ============================================================
-
-def monitor_task(
-    task_id: str,
-    ingestion_key: str,
-    datasource_name: str,
-    parquet_files: List[str],
-    state_object: str,
-    retry_count: int,
-    druid_url: str,
-    username: str,
-    password: str,
-    ingestion_spec_path: str,
-) -> str:
-    """
-    Bizim oluşturduğumuz Druid task'ı takip eder.
-
-    Her 1 dakikada bir status kontrol edilir.
-
-    Timeout burada yoktur.
-
-    Airflow task timeout yönetimini Airflow yapar.
-    """
-
-    logger.info(
-        "Monitoring Druid task: %s",
-        task_id,
-    )
-
-    while True:
-
-        status = get_task_status(
-            task_id=task_id,
-            druid_url=druid_url,
-            username=username,
-            password=password,
-        )
-
-        logger.info(
-            "Task %s -> %s",
-            task_id,
-            status,
-        )
-
-        # ====================================================
-        # ACTIVE
-        # ====================================================
-
-        if status in (
-            "RUNNING",
-            "PENDING",
-            "WAITING",
-        ):
-
-            logger.info(
-                "Task %s is still active. "
-                "Next check in %s seconds.",
-                task_id,
-                POLL_INTERVAL,
-            )
-
-            time.sleep(
-                POLL_INTERVAL
-            )
-
-            continue
-
-        # ====================================================
-        # SUCCESS
-        # ====================================================
-
-        if status == "SUCCESS":
-
-            write_state(
-                object_name=state_object,
-                ingestion_key=ingestion_key,
-                datasource_name=datasource_name,
-                parquet_files=parquet_files,
-                task_id=task_id,
-                status="SUCCESS",
-                retry_count=retry_count,
-            )
-
-            logger.info(
-                "Druid task %s completed successfully.",
-                task_id,
-            )
-
-            return "SUCCESS"
-
-        # ====================================================
-        # FAILED
-        # ====================================================
-
-        if status == "FAILED":
-
-            logger.warning(
-                "Druid task %s FAILED.",
-                task_id,
-            )
-
-            # ------------------------------------------------
-            # MAX RETRIES
-            # ------------------------------------------------
-
-            if retry_count >= MAX_RETRIES:
-
-                logger.error(
-                    "Maximum retry count reached: %s/%s",
-                    retry_count,
-                    MAX_RETRIES,
+    def _find_active_ingestion(
+        self, druid_url: str, username: str, password: str
+    ) -> Optional[Dict[str, Any]]:
+        for endpoint in ("runningTasks", "pendingTasks", "waitingTasks"):
+            tasks = self._get_task_list(endpoint, druid_url, username, password)
+            if tasks is None:
+                return None
+            for task in tasks:
+                if task.get("type") != "index_parallel":
+                    continue
+                logger.info(
+                    "Active Druid ingestion found: id=%s datasource=%s status=%s",
+                    task.get("id"),
+                    task.get("dataSource"),
+                    task.get("status"),
                 )
+                return task
+        return False
 
-                write_state(
+    def _wait_for_druid_ingestion_slot(
+        self, druid_url: str, username: str, password: str
+    ):
+        while True:
+            active_task = self._find_active_ingestion(druid_url, username, password)
+            if active_task is None:
+                logger.warning(
+                    "Unable to determine active Druid tasks. Retrying in %s seconds.",
+                    self.poll_interval,
+                )
+                time.sleep(self.poll_interval)
+                continue
+            if not active_task:
+                logger.info("No active Druid ingestion found.")
+                return
+            logger.info(
+                "Druid ingestion slot is busy. Task=%s datasource=%s. Next check in %s seconds.",
+                active_task.get("id"),
+                active_task.get("dataSource"),
+                self.poll_interval,
+            )
+            time.sleep(self.poll_interval)
+
+    def _submit_task(
+        self,
+        parquet_files: List[str],
+        druid_url: str,
+        username: str,
+        password: str,
+        ingestion_spec_path: str,
+        blocklist_geohashes: Optional[List[str]] = None,
+    ) -> str:
+        ingestion_spec = self.spec_loader.load(
+            parquet_files=parquet_files,
+            ingestion_spec_path=ingestion_spec_path,
+            blocklist_geohashes=blocklist_geohashes,
+        )
+        url = f"{druid_url}/druid/indexer/v1/task"
+        logger.info("Submitting Druid ingestion task")
+        response = requests.post(
+            url,
+            auth=(username, password),
+            headers={"Content-Type": "application/json"},
+            json=ingestion_spec,
+            timeout=60,
+        )
+        logger.info("Druid submit response: %s %s", response.status_code, response.text)
+        response.raise_for_status()
+        task_id = response.json()["task"]
+        logger.info("Druid task created: %s", task_id)
+        return task_id
+
+    def _monitor_task(
+        self,
+        task_id: str,
+        ingestion_key: str,
+        datasource_name: str,
+        parquet_files: List[str],
+        state_object: str,
+        retry_count: int,
+        druid_url: str,
+        username: str,
+        password: str,
+        ingestion_spec_path: str,
+    ) -> str:
+        logger.info("Monitoring Druid task: %s", task_id)
+        while True:
+            status = self._get_task_status(task_id, druid_url, username, password)
+            logger.info("Task %s -> %s", task_id, status)
+            if status in ("RUNNING", "PENDING", "WAITING"):
+                logger.info(
+                    "Task %s is still active. Next check in %s seconds.",
+                    task_id,
+                    self.poll_interval,
+                )
+                time.sleep(self.poll_interval)
+                continue
+            if status == "SUCCESS":
+                self.state_manager.write_state(
                     object_name=state_object,
                     ingestion_key=ingestion_key,
                     datasource_name=datasource_name,
                     parquet_files=parquet_files,
                     task_id=task_id,
-                    status="FAILED",
+                    status="SUCCESS",
                     retry_count=retry_count,
                 )
-
-                raise RuntimeError(
-                    f"Druid ingestion task {task_id} FAILED "
-                    f"after reaching max retries "
-                    f"({retry_count}/{MAX_RETRIES})."
+                logger.info("Druid task %s completed successfully.", task_id)
+                return "SUCCESS"
+            if status == "FAILED":
+                logger.warning("Druid task %s FAILED.", task_id)
+                if retry_count >= self.max_retries:
+                    logger.error(
+                        "Maximum retry count reached: %s/%s", retry_count, self.max_retries
+                    )
+                    self.state_manager.write_state(
+                        object_name=state_object,
+                        ingestion_key=ingestion_key,
+                        datasource_name=datasource_name,
+                        parquet_files=parquet_files,
+                        task_id=task_id,
+                        status="FAILED",
+                        retry_count=retry_count,
+                    )
+                    raise RuntimeError(
+                        f"Druid ingestion task {task_id} FAILED after reaching max retries "
+                        f"({retry_count}/{self.max_retries})."
+                    )
+                new_retry_count = retry_count + 1
+                logger.warning(
+                    "Preparing retry %s/%s.", new_retry_count, self.max_retries
                 )
+                self._wait_for_druid_ingestion_slot(druid_url, username, password)
+                new_task_id = self._submit_task(
+                    parquet_files=parquet_files,
+                    druid_url=druid_url,
+                    username=username,
+                    password=password,
+                    ingestion_spec_path=ingestion_spec_path,
+                )
+                self.state_manager.write_state(
+                    object_name=state_object,
+                    ingestion_key=ingestion_key,
+                    datasource_name=datasource_name,
+                    parquet_files=parquet_files,
+                    task_id=new_task_id,
+                    status="RUNNING",
+                    retry_count=new_retry_count,
+                )
+                logger.info("Retry task created: %s", new_task_id)
+                task_id = new_task_id
+                retry_count = new_retry_count
+                continue
+            if status == "NOT_FOUND":
+                logger.warning("Task %s was not found in Druid.", task_id)
+                self.state_manager.write_state(
+                    object_name=state_object,
+                    ingestion_key=ingestion_key,
+                    datasource_name=datasource_name,
+                    parquet_files=parquet_files,
+                    task_id=task_id,
+                    status="NOT_FOUND",
+                    retry_count=retry_count,
+                )
+                return "NOT_FOUND"
+            if status == "UNKNOWN":
+                logger.warning(
+                    "Druid task status is currently unknown. Retrying in %s seconds.",
+                    self.poll_interval,
+                )
+                time.sleep(self.poll_interval)
+                continue
+            logger.warning("Unexpected task status: %s", status)
+            return status
 
-            # ------------------------------------------------
-            # NEXT RETRY
-            # ------------------------------------------------
+    def run(
+        self,
+        parquet_files: List[str],
+        ingestion_spec_path: str,
+        blocklist_geohashes: Optional[List[str]] = None,
+    ) -> Dict[str, Any]:
+        """
+        Executes the Druid ingestion workflow.
+        """
+        if not parquet_files:
+            raise ValueError("parquet_files cannot be empty")
+        if not ingestion_spec_path:
+            raise ValueError("ingestion_spec_path cannot be empty")
 
-            new_retry_count = (
-                retry_count + 1
-            )
+        druid_url, username, password = get_druid_credentials(self.conn_id)
 
-            logger.warning(
-                "Preparing retry %s/%s.",
-                new_retry_count,
-                MAX_RETRIES,
-            )
+        with open(ingestion_spec_path, "r", encoding="utf-8") as f:
+            original_spec = json.load(f)
+        datasource_name = original_spec["spec"]["dataSchema"]["dataSource"]
 
-            # ------------------------------------------------
-            # GLOBAL DRUID SLOT
-            # ------------------------------------------------
-            #
-            # Retry submit etmeden önce yine Druid'de
-            # başka index_parallel var mı kontrol edilir.
-            #
-            # Varsa 1 dakika aralıklarla beklenir.
-            # ------------------------------------------------
+        if blocklist_geohashes is None:
+            try:
+                from citadel.utilities.read_csv import read_blocklist_geohashes
+                date_path = self.state_manager.extract_date_from_parquet_files(parquet_files)
+                blocklist_geohashes = read_blocklist_geohashes(
+                    country=datasource_name,
+                    date_str=date_path,
+                    conn_id=self.gcs_conn_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Could not auto-fetch blocklist geohashes for %s: %s", datasource_name, e
+                )
+                blocklist_geohashes = []
 
-            wait_for_druid_ingestion_slot(
-                druid_url=druid_url,
-                username=username,
-                password=password,
-            )
-
-            # ------------------------------------------------
-            # SUBMIT RETRY
-            # ------------------------------------------------
-
-            new_task_id = submit_task(
-                parquet_files=parquet_files,
-                druid_url=druid_url,
-                username=username,
-                password=password,
-                ingestion_spec_path=ingestion_spec_path,
-            )
-
-            write_state(
-                object_name=state_object,
-                ingestion_key=ingestion_key,
-                datasource_name=datasource_name,
-                parquet_files=parquet_files,
-                task_id=new_task_id,
-                status="RUNNING",
-                retry_count=new_retry_count,
-            )
-
-            logger.info(
-                "Retry task created: %s",
-                new_task_id,
-            )
-
-            task_id = new_task_id
-            retry_count = new_retry_count
-
-            continue
-
-        # ====================================================
-        # NOT FOUND
-        # ====================================================
-
-        if status == "NOT_FOUND":
-
-            logger.warning(
-                "Task %s was not found in Druid.",
-                task_id,
-            )
-
-            write_state(
-                object_name=state_object,
-                ingestion_key=ingestion_key,
-                datasource_name=datasource_name,
-                parquet_files=parquet_files,
-                task_id=task_id,
-                status="NOT_FOUND",
-                retry_count=retry_count,
-            )
-
-            return "NOT_FOUND"
-
-        # ====================================================
-        # UNKNOWN
-        # ====================================================
-
-        if status == "UNKNOWN":
-
-            logger.warning(
-                "Druid task status is currently unknown. "
-                "Retrying in %s seconds.",
-                POLL_INTERVAL,
-            )
-
-            time.sleep(
-                POLL_INTERVAL
-            )
-
-            continue
-
-        # ====================================================
-        # OTHER
-        # ====================================================
-
-        logger.warning(
-            "Unexpected task status: %s",
-            status,
+        ingestion_key = self.state_manager.calculate_ingestion_key(
+            datasource_name=datasource_name, parquet_files=parquet_files
+        )
+        state_object = self.state_manager.get_state_object_name(
+            datasource_name=datasource_name,
+            parquet_files=parquet_files,
+            ingestion_key=ingestion_key,
         )
 
-        return status
+        logger.info("Datasource: %s", datasource_name)
+        logger.info("Ingestion key: %s", ingestion_key)
+        logger.info("State: gs://%s/%s", self.log_bucket, state_object)
 
+        state = self.state_manager.read_state(state_object)
+        if state:
+            state_status = state.get("status")
+            task_id = state.get("task_id")
+            retry_count = state.get("retry_count", 0)
 
-# ============================================================
-# MAIN
-# ============================================================
+            logger.info(
+                "Existing state found: status=%s task_id=%s retry=%s",
+                state_status,
+                task_id,
+                retry_count,
+            )
+
+            if state_status == "SUCCESS":
+                logger.info("This ingestion already SUCCESS. No new task will be submitted.")
+                return {
+                    "status": "SKIPPED",
+                    "reason": "ALREADY_SUCCESS",
+                    "ingestion_key": ingestion_key,
+                    "task_id": task_id,
+                }
+            if state_status in ("RUNNING", "PENDING", "WAITING"):
+                logger.info("Existing ingestion is active. Monitoring task %s.", task_id)
+                result = self._monitor_task(
+                    task_id=task_id,
+                    ingestion_key=ingestion_key,
+                    datasource_name=datasource_name,
+                    parquet_files=parquet_files,
+                    state_object=state_object,
+                    retry_count=retry_count,
+                    druid_url=druid_url,
+                    username=username,
+                    password=password,
+                    ingestion_spec_path=ingestion_spec_path,
+                )
+                return {"status": result, "ingestion_key": ingestion_key, "task_id": task_id}
+            if state_status == "FAILED":
+                logger.info("Previous ingestion FAILED.")
+                if retry_count >= self.max_retries:
+                    logger.error("Maximum retry count reached.")
+                    raise RuntimeError(
+                        f"Druid ingestion task {task_id} previously FAILED and max retries reached "
+                        f"({retry_count}/{self.max_retries})."
+                    )
+                new_retry_count = retry_count + 1
+                self._wait_for_druid_ingestion_slot(druid_url, username, password)
+                new_task_id = self._submit_task(
+                    parquet_files=parquet_files,
+                    druid_url=druid_url,
+                    username=username,
+                    password=password,
+                    ingestion_spec_path=ingestion_spec_path,
+                    blocklist_geohashes=blocklist_geohashes,
+                )
+                self.state_manager.write_state(
+                    object_name=state_object,
+                    ingestion_key=ingestion_key,
+                    datasource_name=datasource_name,
+                    parquet_files=parquet_files,
+                    task_id=new_task_id,
+                    status="RUNNING",
+                    retry_count=new_retry_count,
+                )
+                result = self._monitor_task(
+                    task_id=new_task_id,
+                    ingestion_key=ingestion_key,
+                    datasource_name=datasource_name,
+                    parquet_files=parquet_files,
+                    state_object=state_object,
+                    retry_count=new_retry_count,
+                    druid_url=druid_url,
+                    username=username,
+                    password=password,
+                    ingestion_spec_path=ingestion_spec_path,
+                )
+                return {"status": result, "ingestion_key": ingestion_key, "task_id": new_task_id}
+            if state_status == "NOT_FOUND":
+                raise RuntimeError(f"Previous Druid task {task_id} was not found.")
+            
+            logger.info("State is '%s'. No new ingestion will be submitted.", state_status)
+            return {
+                "status": "SKIPPED",
+                "reason": f"STATE_{state_status}",
+                "ingestion_key": ingestion_key,
+                "task_id": task_id,
+            }
+
+        logger.info("No previous state found.")
+        self._wait_for_druid_ingestion_slot(druid_url, username, password)
+        task_id = self._submit_task(
+            parquet_files=parquet_files,
+            druid_url=druid_url,
+            username=username,
+            password=password,
+            ingestion_spec_path=ingestion_spec_path,
+            blocklist_geohashes=blocklist_geohashes,
+        )
+        self.state_manager.write_state(
+            object_name=state_object,
+            ingestion_key=ingestion_key,
+            datasource_name=datasource_name,
+            parquet_files=parquet_files,
+            task_id=task_id,
+            status="RUNNING",
+            retry_count=0,
+        )
+        result = self._monitor_task(
+            task_id=task_id,
+            ingestion_key=ingestion_key,
+            datasource_name=datasource_name,
+            parquet_files=parquet_files,
+            state_object=state_object,
+            retry_count=0,
+            druid_url=druid_url,
+            username=username,
+            password=password,
+            ingestion_spec_path=ingestion_spec_path,
+        )
+        return {"status": result, "ingestion_key": ingestion_key, "task_id": task_id}
+
 
 def run_ingestion(
     parquet_files: List[str],
     ingestion_spec_path: str,
     blocklist_geohashes: Optional[List[str]] = None,
-    conn_id: str | None = None,
+    conn_id: Optional[str] = None,
 ) -> Dict[str, Any]:
+    """
+    Backward-compatible wrapper. Use DruidIngestionService directly for more control.
 
-    if not parquet_files:
-        raise ValueError("parquet_files cannot be empty")
+    Args:
+        parquet_files: List of GCS URIs for the parquet files to ingest.
+        ingestion_spec_path: Path to the ingestion specification JSON.
+        blocklist_geohashes: Optional list of geohashes to filter out.
+        conn_id: Connection ID for Druid.
 
-    if not ingestion_spec_path:
-        raise ValueError(
-            "ingestion_spec_path cannot be empty"
-        )
-
-    druid_url, username, password = get_druid_credentials(conn_id)
-
-    # ========================================================
-    # INGESTION SPEC
-    # ========================================================
-
-    with open(
-        ingestion_spec_path,
-        "r",
-        encoding="utf-8",
-    ) as f:
-        original_spec = json.load(f)
-
-    datasource_name = (
-        original_spec["spec"]
-        ["dataSchema"]
-        ["dataSource"]
-    )
-
-    # ========================================================
-    # BLOCKLIST RESOLUTION
-    # ========================================================
-    if blocklist_geohashes is None:
-        try:
-            from citadel.utilities.read_csv import read_blocklist_geohashes
-
-            date_path = extract_date_from_parquet_files(parquet_files)
-            blocklist_geohashes = read_blocklist_geohashes(
-                country=datasource_name,
-                date_str=date_path,
-                conn_id=GCS_CONN_ID,
-            )
-        except Exception as e:
-            logger.warning(
-                "Could not auto-fetch blocklist geohashes for %s: %s",
-                datasource_name,
-                e,
-            )
-            blocklist_geohashes = []
-
-
-    # ========================================================
-    # INGESTION KEY
-    # ========================================================
-
-    ingestion_key = calculate_ingestion_key(
-        datasource_name=datasource_name,
+    Returns:
+        A dictionary with the task execution status and metadata.
+    """
+    service = DruidIngestionService(conn_id=conn_id)
+    return service.run(
         parquet_files=parquet_files,
-    )
-
-    # ========================================================
-    # STATE PATH
-    # ========================================================
-
-    state_object = get_state_object_name(
-        datasource_name=datasource_name,
-        parquet_files=parquet_files,
-        ingestion_key=ingestion_key,
-    )
-
-    logger.info(
-        "Datasource: %s",
-        datasource_name,
-    )
-
-    logger.info(
-        "Ingestion key: %s",
-        ingestion_key,
-    )
-
-    logger.info(
-        "State: gs://%s/%s",
-        LOG_BUCKET,
-        state_object,
-    )
-
-    # ========================================================
-    # 1. CHECK OUR STATE
-    # ========================================================
-
-    state = read_state(
-        state_object
-    )
-
-    if state:
-
-        state_status = state.get(
-            "status"
-        )
-
-        task_id = state.get(
-            "task_id"
-        )
-
-        retry_count = state.get(
-            "retry_count",
-            0,
-        )
-
-        logger.info(
-            "Existing state found: "
-            "status=%s task_id=%s retry=%s",
-            state_status,
-            task_id,
-            retry_count,
-        )
-
-        # ----------------------------------------------------
-        # SUCCESS
-        # ----------------------------------------------------
-
-        if state_status == "SUCCESS":
-
-            logger.info(
-                "This ingestion already SUCCESS. "
-                "No new task will be submitted."
-            )
-
-            return {
-                "status": "SKIPPED",
-                "reason": "ALREADY_SUCCESS",
-                "ingestion_key": ingestion_key,
-                "task_id": task_id,
-            }
-
-        # ----------------------------------------------------
-        # ACTIVE
-        # ----------------------------------------------------
-
-        if state_status in (
-            "RUNNING",
-            "PENDING",
-            "WAITING",
-        ):
-
-            logger.info(
-                "Existing ingestion is active. "
-                "Monitoring task %s.",
-                task_id,
-            )
-
-            result = monitor_task(
-                task_id=task_id,
-                ingestion_key=ingestion_key,
-                datasource_name=datasource_name,
-                parquet_files=parquet_files,
-                state_object=state_object,
-                retry_count=retry_count,
-                druid_url=druid_url,
-                username=username,
-                password=password,
-                ingestion_spec_path=ingestion_spec_path,
-            )
-
-            return {
-                "status": result,
-                "ingestion_key": ingestion_key,
-                "task_id": task_id,
-            }
-
-        # ----------------------------------------------------
-        # FAILED
-        # ----------------------------------------------------
-
-        if state_status == "FAILED":
-
-            logger.info(
-                "Previous ingestion FAILED."
-            )
-
-            if retry_count >= MAX_RETRIES:
-
-                logger.error(
-                    "Maximum retry count reached."
-                )
-
-                raise RuntimeError(
-                    f"Druid ingestion task {task_id} previously FAILED "
-                    f"and max retries reached "
-                    f"({retry_count}/{MAX_RETRIES})."
-                )
-
-            new_retry_count = (
-                retry_count + 1
-            )
-
-            # ------------------------------------------------
-            # GLOBAL SLOT
-            # ------------------------------------------------
-
-            wait_for_druid_ingestion_slot(
-                druid_url=druid_url,
-                username=username,
-                password=password,
-            )
-
-            # ------------------------------------------------
-            # SUBMIT RETRY
-            # ------------------------------------------------
-
-            new_task_id = submit_task(
-                parquet_files=parquet_files,
-                druid_url=druid_url,
-                username=username,
-                password=password,
-                ingestion_spec_path=ingestion_spec_path,
-                blocklist_geohashes=blocklist_geohashes,
-            )
-
-            write_state(
-                object_name=state_object,
-                ingestion_key=ingestion_key,
-                datasource_name=datasource_name,
-                parquet_files=parquet_files,
-                task_id=new_task_id,
-                status="RUNNING",
-                retry_count=new_retry_count,
-            )
-
-            result = monitor_task(
-                task_id=new_task_id,
-                ingestion_key=ingestion_key,
-                datasource_name=datasource_name,
-                parquet_files=parquet_files,
-                state_object=state_object,
-                retry_count=new_retry_count,
-                druid_url=druid_url,
-                username=username,
-                password=password,
-                ingestion_spec_path=ingestion_spec_path,
-            )
-
-            return {
-                "status": result,
-                "ingestion_key": ingestion_key,
-                "task_id": new_task_id,
-            }
-
-        # ----------------------------------------------------
-        # NOT FOUND
-        # ----------------------------------------------------
-
-        if state_status == "NOT_FOUND":
-
-            raise RuntimeError(
-                f"Previous Druid task {task_id} "
-                f"was not found."
-            )
-
-        # ----------------------------------------------------
-        # OTHER
-        # ----------------------------------------------------
-
-        logger.info(
-            "State is '%s'. "
-            "No new ingestion will be submitted.",
-            state_status,
-        )
-
-        return {
-            "status": "SKIPPED",
-            "reason": f"STATE_{state_status}",
-            "ingestion_key": ingestion_key,
-            "task_id": task_id,
-        }
-
-    # ========================================================
-    # 2. NO STATE
-    # ========================================================
-
-    logger.info(
-        "No previous state found."
-    )
-
-    # ========================================================
-    # 3. WAIT FOR GLOBAL DRUID SLOT
-    # ========================================================
-    #
-    # Burada datasource kontrol edilmiyor.
-    #
-    # Herhangi bir index_parallel varsa bekle.
-    #
-    # 1 dakika -> tekrar kontrol
-    #
-    # Bu işlem Druid'deki mevcut task bitene kadar
-    # devam eder.
-    # ========================================================
-
-    wait_for_druid_ingestion_slot(
-        druid_url=druid_url,
-        username=username,
-        password=password,
-    )
-
-    # ========================================================
-    # 4. SUBMIT OUR INGESTION
-    # ========================================================
-
-    task_id = submit_task(
-        parquet_files=parquet_files,
-        druid_url=druid_url,
-        username=username,
-        password=password,
         ingestion_spec_path=ingestion_spec_path,
         blocklist_geohashes=blocklist_geohashes,
     )
-
-    # ========================================================
-    # 5. INITIAL STATE
-    # ========================================================
-
-    write_state(
-        object_name=state_object,
-        ingestion_key=ingestion_key,
-        datasource_name=datasource_name,
-        parquet_files=parquet_files,
-        task_id=task_id,
-        status="RUNNING",
-        retry_count=0,
-    )
-
-    # ========================================================
-    # 6. MONITOR OUR TASK
-    # ========================================================
-
-    result = monitor_task(
-        task_id=task_id,
-        ingestion_key=ingestion_key,
-        datasource_name=datasource_name,
-        parquet_files=parquet_files,
-        state_object=state_object,
-        retry_count=0,
-        druid_url=druid_url,
-        username=username,
-        password=password,
-        ingestion_spec_path=ingestion_spec_path,
-    )
-
-    return {
-        "status": result,
-        "ingestion_key": ingestion_key,
-        "task_id": task_id,
-    }

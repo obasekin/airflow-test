@@ -1,7 +1,20 @@
+"""
+Druid credentials management module.
+
+This module provides functionality to load and validate Druid connection credentials
+from Airflow.
+
+Usage:
+    url, username, password = get_druid_credentials(conn_id="my_druid_conn")
+
+Returns:
+    tuple[str, str, str]: A tuple containing the Druid URL, username, and password.
+"""
 from airflow.hooks.base import BaseHook
+from citadel.config_loader import config
 
 
-DEFAULT_CONN_ID = "druid_default"
+DEFAULT_CONN_ID = config.druid.get('conn_id', 'druid_default')
 
 
 def get_druid_credentials(
