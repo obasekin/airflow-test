@@ -60,9 +60,9 @@ def create_country_dag(yaml_config: dict):
     
     dag_id = f"{country}_daily_dag"
     
-    gcs_bucket_name = gcs_bucket_name
-    gcs_conn_id = gcs_conn_id
-    smtp_conn_id = smtp_conn_id
+    gcs_bucket_name = citadel_config.gcs.get("bucket_name", "arcanor-orion")
+    gcs_conn_id = citadel_config.gcs.get("conn_id", "google_cloud_default")
+    smtp_conn_id = citadel_config.notifications.get("smtp_conn_id", "smtp_default")
     notebook_timeout = citadel_config.jupyter.get("timeout", 1800)
     
     gcs_base_path = get_country_base_path(country)
