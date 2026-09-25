@@ -43,6 +43,32 @@ druid_query: |
   GROUP BY "day"
 druid_query_offset_days: 7
 
+# Jupyter notebook'da çalıştırılacak Python kodu.
+# {query} placeholder'ı druid_query ile doldurulur.
+# Druid bağlantı parametreleri ({host}, {port}, vs.) otomatik inject edilir.
+# Farklı bir sorgu yöntemi kullanmak isterseniz bu kodu değiştirin.
+notebook_code: |
+  from pydruid.db import connect
+
+  druid_connection = connect(
+      host={host!r},
+      port={port!r},
+      path={path!r},
+      scheme={scheme!r},
+      user={username!r},
+      password={password!r},
+  )
+
+  druid_cursor = druid_connection.cursor()
+
+  query = \"\"\"
+  {query}
+  \"\"\"
+
+  druid_cursor.execute(query)
+  result = druid_cursor.fetchall()
+  print("Result:", result)
+
 owner: "obasekin"
 retries: 3
 retry_delay_minutes: 5

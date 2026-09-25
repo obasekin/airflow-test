@@ -50,35 +50,13 @@ from citadel.jupyter.jupyter_executor import execute_druid_query_in_notebook
 local_tz = pendulum.timezone(citadel_config.general.get("timezone", "Europe/Istanbul"))
 FAIL_ON_NOTEBOOK_ERROR = True
 
-NOTEBOOK_CODE = """
-from pydruid.db import connect
-
-druid_connection = connect(
-    host={host!r},
-    port={port!r},
-    path={path!r},
-    scheme={scheme!r},
-    user={username!r},
-    password={password!r},
-)
-
-druid_cursor = druid_connection.cursor()
-
-query = \"\"\"
-{query}
-\"\"\"
-
-druid_cursor.execute(query)
-result = druid_cursor.fetchall()
-print("Result:", result)
-"""
-
 def create_country_dag(yaml_config: dict):
     country = yaml_config["country"]
     manifest_prefixes = yaml_config.get("manifest_prefixes", {})
     features = yaml_config.get("features", {})
     run_days = {int(k): v for k, v in yaml_config.get("run_days", {}).items()}
     query_template = yaml_config.get("druid_query", "")
+    notebook_code_template = yaml_config.get("notebook_code", "")
     
     dag_id = f"{country}_daily_dag"
     
@@ -244,7 +222,7 @@ def create_country_dag(yaml_config: dict):
                 country=country,
             )
             result = execute_druid_query_in_notebook(
-                code=NOTEBOOK_CODE.replace("{query}", formatted_query.strip()),
+                code=notebook_code_template.replace("{query}", formatted_query.strip()),
                 fail_on_execution_error=FAIL_ON_NOTEBOOK_ERROR,
                 timeout=notebook_timeout,
             )
