@@ -52,9 +52,9 @@ notebook_code: |
 
   druid_cursor = druid_connection.cursor()
 
-  query = \"\"\"
+  query = """
   {query}
-  \"\"\"
+  """
 
   druid_cursor.execute(query)
   result = druid_cursor.fetchall()
